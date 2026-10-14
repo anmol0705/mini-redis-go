@@ -27,7 +27,7 @@ func (s *Store) Delete(key string) bool {
 	return existed
 }
 
-// Check for existance of a certain key
+// Exists reports whether key exists.
 func (s *Store) Exists(key string) bool {
 	_, exists := s.data[key]
 	return exists
