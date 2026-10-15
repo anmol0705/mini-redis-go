@@ -73,9 +73,7 @@ func TestConcurrentUse(t *testing.T) {
 	s := New()
 	var wg sync.WaitGroup
 	for g := range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range 200 {
 				k := strconv.Itoa(g*1000 + i)
 				s.Set(k, "v")
@@ -87,7 +85,7 @@ func TestConcurrentUse(t *testing.T) {
 				}
 				s.Delete(k)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
