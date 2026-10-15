@@ -454,11 +454,11 @@ func TestServeReturnsErrorWhenListenerIsClosedUnderneath(t *testing.T) {
 }
 
 func TestSessionQuitIsCaseInsensitive(t *testing.T) {
-	s := newSession(funcHandler(func([]string) resp.Value { return resp.Error("must not be called") }))
+	s := newSession(funcHandler(func([]string) resp.Value { return resp.Error("must not be called") }), nil, 0, nil, nil)
 	for _, name := range []string{"QUIT", "quit", "Quit"} {
-		reply, closeAfter := s.execute(context.Background(), []string{name})
-		if !closeAfter || reply.Kind != resp.KindSimpleString || reply.Str != "OK" {
-			t.Errorf("%s: reply=%+v closeAfter=%v", name, reply, closeAfter)
+		replies, closeAfter := s.execute(context.Background(), []string{name})
+		if !closeAfter || len(replies) != 1 || replies[0].Kind != resp.KindSimpleString || replies[0].Str != "OK" {
+			t.Errorf("%s: replies=%+v closeAfter=%v", name, replies, closeAfter)
 		}
 	}
 }

@@ -29,3 +29,41 @@ been measured it says so.
   goroutine in Phase 2 before replacing it. Measured: not yet.
 - I chose **standard library only** (`flag`, `log/slog`, `net`) to keep the
   project explainable end to end.
+
+## Phase 2
+
+- I chose a **single goroutine that owns the data** over a mutex because it makes
+  transactions, propagation order and expiry trivially correct. I measured
+  both: the queue hop costs about 0.4 us per command at handler level (0.85 vs
+  0.5 us, medians of 3 runs), and over TCP the engine was even or ahead
+  (133.6k vs 87.6k cmd/s without pipelining, 594k vs 531k at depth 16) on a
+  Windows laptop. Debian numbers: TBD - measure on Debian. (Decision 005.)
+- I chose **my own skip list with span counts** over a library or a sorted
+  slice, so rank and range-by-rank are O(log n). I verified it against a
+  sorted-slice reference with randomized operations, plus a structural
+  invariant checker (spans, backward pointers, tail).
+- I chose **lazy plus sampled active expiry** over a timer per key or a heap,
+  because it has bounded cost per cycle and costs nothing extra per key. The
+  sampler repeats while more than ~25% of a sample was expired.
+- I chose to **rewrite relative commands into absolute ones** (`EXPIRE` to
+  `PEXPIREAT`, `SET ... EX` to `SET ... PXAT`) at the point where the command
+  executes, so the log and replicas are replay-safe.
+- I chose a **ring-buffer deque** for lists so both ends are O(1).
+- I chose to put **memory accounting inside the store** (incremental
+  deltas, verified against a recount after random operations), so the
+  `maxmemory` check is O(1).
+- I chose **injected time and randomness** (`SetNow`, seeded `rand.Rand`) so
+  expiry and eviction tests are deterministic.
+
+## Phase 3
+
+- I chose **drop the subscriber** over drop-the-message or block-the-publisher
+  when a pub/sub queue overflows, because it keeps publishers non-blocking,
+  bounds memory, and makes the loss visible to the client (decision 006).
+  Measured: a test with 300 x 256 KiB messages shows the healthy subscriber
+  gets all 300 while the stalled one is cut off.
+- I chose to run **`EXEC` as a single engine request** over locking: atomicity
+  comes from the single owner, with zero extra machinery.
+- I chose to **validate at queue time** (unknown command, wrong arity) so
+  `EXEC` can return `EXECABORT`, and **not** to roll back runtime errors,
+  matching Redis semantics.

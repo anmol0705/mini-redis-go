@@ -18,6 +18,7 @@ import (
 
 	"github.com/anmol0705/mini-redis-go/internal/command"
 	"github.com/anmol0705/mini-redis-go/internal/engine"
+	"github.com/anmol0705/mini-redis-go/internal/pubsub"
 	"github.com/anmol0705/mini-redis-go/internal/resp"
 	"github.com/anmol0705/mini-redis-go/internal/store"
 )
@@ -192,6 +193,9 @@ func startServer(t testing.TB, cfg Config, h Handler) *testServer {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	if cfg.Hub == nil {
+		cfg.Hub = pubsub.NewHub()
+	}
 	srv, err := Listen(cfg)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -200,7 +204,7 @@ func startServer(t testing.TB, cfg Config, h Handler) *testServer {
 	if h == nil {
 		eng = engine.New(engine.Options{
 			DB:     store.New(nil),
-			Env:    &command.Env{Info: srv},
+			Env:    &command.Env{Info: srv, Publisher: cfg.Hub},
 			Logger: cfg.Logger,
 		})
 		t.Cleanup(eng.Close) // registered first, so it runs after the server has stopped

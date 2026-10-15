@@ -48,6 +48,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	policy := fs.String("maxmemory-policy", "noeviction", "noeviction, allkeys-lru, allkeys-random or volatile-ttl")
 	samples := fs.Int("maxmemory-samples", 5, "keys sampled per eviction")
 	queue := fs.Int("queue-size", 1024, "engine request queue capacity")
+	subQueue := fs.Int("subscriber-queue", 256, "pub/sub messages a subscriber may lag by before it is disconnected")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -63,8 +64,8 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	if *idleTimeout < 0 || *grace < 0 {
 		return errors.New("-idle-timeout and -shutdown-grace must not be negative")
 	}
-	if *samples < 1 || *queue < 1 {
-		return errors.New("-maxmemory-samples and -queue-size must be at least 1")
+	if *samples < 1 || *queue < 1 || *subQueue < 1 {
+		return errors.New("-maxmemory-samples, -queue-size and -subscriber-queue must be at least 1")
 	}
 	memBytes, err := parseSize(*maxMemory)
 	if err != nil {
@@ -85,6 +86,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 		Version:          version,
 		Logger:           logger,
 		QueueSize:        *queue,
+		SubscriberQueue:  *subQueue,
 		MaxMemory:        memBytes,
 		MaxMemoryPolicy:  *policy,
 		MaxMemorySamples: *samples,

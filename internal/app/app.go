@@ -20,6 +20,7 @@ import (
 
 	"github.com/anmol0705/mini-redis-go/internal/command"
 	"github.com/anmol0705/mini-redis-go/internal/engine"
+	"github.com/anmol0705/mini-redis-go/internal/pubsub"
 	"github.com/anmol0705/mini-redis-go/internal/server"
 	"github.com/anmol0705/mini-redis-go/internal/store"
 )
@@ -36,6 +37,9 @@ type Config struct {
 
 	// QueueSize is the engine's pending-request capacity.
 	QueueSize int
+	// SubscriberQueue is the per-connection pub/sub backlog before a slow
+	// subscriber is disconnected (default 256).
+	SubscriberQueue int
 
 	// MaxMemory is the estimated-bytes limit (0 = unlimited).
 	MaxMemory        int64
@@ -69,20 +73,23 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 		return nil, errors.New("app: maxmemory and maxmemory samples must not be negative")
 	}
 
+	hub := pubsub.NewHub()
 	srv, err := server.Listen(server.Config{
-		Addr:          cfg.Addr,
-		MaxClients:    cfg.MaxClients,
-		IdleTimeout:   cfg.IdleTimeout,
-		ShutdownGrace: cfg.ShutdownGrace,
-		Version:       cfg.Version,
-		Logger:        cfg.Logger,
-		Now:           cfg.Clock,
+		Hub:             hub,
+		SubscriberQueue: cfg.SubscriberQueue,
+		Addr:            cfg.Addr,
+		MaxClients:      cfg.MaxClients,
+		IdleTimeout:     cfg.IdleTimeout,
+		ShutdownGrace:   cfg.ShutdownGrace,
+		Version:         cfg.Version,
+		Logger:          cfg.Logger,
+		Now:             cfg.Clock,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	env := &command.Env{Info: srv}
+	env := &command.Env{Info: srv, Publisher: hub}
 	eng := engine.New(engine.Options{
 		DB:           store.New(nil),
 		Env:          env,

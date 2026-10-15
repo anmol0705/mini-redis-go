@@ -1,6 +1,6 @@
 # Architecture
 
-Status: end of Phase 2. This file grows each phase.
+Status: end of Phase 3. This file grows each phase.
 
 ## Package map
 
@@ -47,3 +47,17 @@ Dependencies point downwards: `app -> server, engine -> command -> store -> skip
   `Engine.mu` (a gate that stops submissions after `Close`).
 - Shutdown order (`app.Node.run`): the server stops first (no new commands),
   then the engine is closed. Every goroutine has an owner and an exit path.
+
+## Phase 3 additions
+
+- `internal/pubsub`: the `Hub` (channel to subscribers map, `RWMutex`) and
+  bounded per-connection `Subscriber` queues. `PUBLISH` runs on the engine and
+  calls `Hub.Publish` through the `command.Publisher` interface; it never
+  blocks.
+- `internal/server/session.go`: per-connection state machine. It answers QUIT,
+  MULTI/EXEC/DISCARD and SUBSCRIBE/UNSUBSCRIBE itself. `EXEC` calls
+  `Handler.ExecuteAtomic`, which the engine runs as one request.
+- A subscribed connection has a second goroutine (the pusher) that writes
+  messages. It is owned by the connection goroutine; both write through
+  `connection.wmu`. Teardown order: pusher stopped, subscriptions removed,
+  connection released.

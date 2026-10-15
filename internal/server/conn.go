@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anmol0705/mini-redis-go/internal/pubsub"
 	"github.com/anmol0705/mini-redis-go/internal/resp"
 )
 
@@ -22,8 +23,10 @@ var errServerStopping = errors.New("server: shutting down")
 // we are about to hang up on, so a client that never reads cannot hold us.
 const finalReplyTimeout = time.Second
 
-// connection wraps a net.Conn with the two behaviours the command loop
-// needs from its reader:
+// pushBatch is how many queued pub/sub messages are written before flushing.
+const pushBatch = 64
+
+// connection wraps a net.Conn with the behaviours the command loop needs:
 //
 //  1. Flush before blocking. The bufio.Reader above us only calls Read when
 //     its buffer is empty, which means every command received so far has been
@@ -32,10 +35,15 @@ const finalReplyTimeout = time.Second
 //     answered right away. See docs/decisions/001-flush-strategy.md.
 //  2. Cooperative stop. stop() makes the blocked Read return so the
 //     goroutine can exit after finishing its current command.
+//  3. Serialised writes. Normally only the connection goroutine writes, but a
+//     subscribed connection also has a push goroutine, so every write and
+//     flush takes wmu.
 type connection struct {
 	net.Conn
-	w    *resp.Writer
 	idle time.Duration
+
+	wmu sync.Mutex // guards w
+	w   *resp.Writer
 
 	// ctx is cancelled when the connection is force-closed or released.
 	ctx    context.Context
@@ -43,6 +51,10 @@ type connection struct {
 
 	mu       sync.Mutex // guards stopping and deadline updates
 	stopping bool
+
+	// Push goroutine for subscribed connections (see startPusher).
+	pushQuit chan struct{}
+	pushWG   sync.WaitGroup
 }
 
 func newConnection(nc net.Conn, idle time.Duration) *connection {
@@ -56,9 +68,23 @@ func (c *connection) forceClose() {
 	_ = c.Conn.Close()
 }
 
+// send queues a reply in the write buffer.
+func (c *connection) send(v resp.Value) error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	return c.w.WriteValue(v)
+}
+
+// flush writes out everything queued.
+func (c *connection) flush() error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	return c.w.Flush()
+}
+
 // Read implements io.Reader for the bufio.Reader of serveConn.
 func (c *connection) Read(p []byte) (int, error) {
-	if err := c.w.Flush(); err != nil {
+	if err := c.flush(); err != nil {
 		return 0, err
 	}
 
@@ -98,9 +124,65 @@ func (c *connection) isStopping() bool {
 // errors are ignored: the client is being dropped anyway.
 func (c *connection) replyAndClose(msg string) {
 	_ = c.Conn.SetWriteDeadline(time.Now().Add(finalReplyTimeout))
-	_ = c.w.WriteError(msg)
-	_ = c.w.Flush()
+	_ = c.send(resp.Error(msg))
+	_ = c.flush()
 	_ = c.Conn.Close()
+}
+
+// startPusher starts the goroutine that writes pub/sub messages for sub to
+// the client. It is called once, by the connection goroutine, at the first
+// SUBSCRIBE.
+func (c *connection) startPusher(sub *pubsub.Subscriber, log func(msg string, err error)) {
+	c.pushQuit = make(chan struct{})
+	c.pushWG.Go(func() {
+		for {
+			select {
+			case m := <-sub.Messages():
+				if err := c.pushMessages(sub, m); err != nil {
+					log("push to subscriber failed", err)
+					c.forceClose() // the read loop will notice and exit
+					return
+				}
+			case <-c.pushQuit:
+				return
+			}
+		}
+	})
+}
+
+// pushMessages writes m and whatever else is already queued (up to
+// pushBatch), then flushes once.
+func (c *connection) pushMessages(sub *pubsub.Subscriber, m pubsub.Message) error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	for i := 0; ; i++ {
+		push := resp.Array(resp.BulkString("message"), resp.BulkString(m.Channel), resp.BulkString(m.Payload))
+		if err := c.w.WriteValue(push); err != nil {
+			return err
+		}
+		if i+1 >= pushBatch {
+			break
+		}
+		select {
+		case m = <-sub.Messages():
+			continue
+		default:
+		}
+		break
+	}
+	return c.w.Flush()
+}
+
+// stopPusher ends the push goroutine, if one was started. The connection is
+// being torn down anyway, so it is closed first: that unblocks a push that is
+// stuck writing to a client which stopped reading.
+func (c *connection) stopPusher() {
+	if c.pushQuit == nil {
+		return
+	}
+	close(c.pushQuit)
+	c.forceClose()
+	c.pushWG.Wait()
 }
 
 // serveConn is the per-connection goroutine: read a command, run it, queue
@@ -117,8 +199,15 @@ func (s *Server) serveConn(c *connection, h Handler) {
 		}
 	}()
 
+	sess := newSession(h, s.cfg.Hub, s.cfg.SubscriberQueue, func(sub *pubsub.Subscriber) {
+		c.startPusher(sub, func(msg string, err error) {
+			s.log.Debug(msg, "remote", c.RemoteAddr(), "err", err)
+		})
+	}, c.forceClose)
+	defer sess.close()
+	defer c.stopPusher() // registered last, so it runs first
+
 	r := bufio.NewReader(c)
-	sess := newSession(h)
 	for {
 		args, err := resp.ReadCommand(r)
 		if err != nil {
@@ -126,13 +215,15 @@ func (s *Server) serveConn(c *connection, h Handler) {
 			return
 		}
 
-		reply, closeAfter := sess.execute(c.ctx, args)
-		if err := c.w.WriteValue(reply); err != nil {
-			s.log.Debug("write failed", "remote", c.RemoteAddr(), "err", err)
-			return
+		replies, closeAfter := sess.execute(c.ctx, args)
+		for _, reply := range replies {
+			if err := c.send(reply); err != nil {
+				s.log.Debug("write failed", "remote", c.RemoteAddr(), "err", err)
+				return
+			}
 		}
 		if closeAfter {
-			if err := c.w.Flush(); err != nil {
+			if err := c.flush(); err != nil {
 				s.log.Debug("flush failed", "remote", c.RemoteAddr(), "err", err)
 			}
 			return

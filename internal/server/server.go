@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/anmol0705/mini-redis-go/internal/command"
+	"github.com/anmol0705/mini-redis-go/internal/pubsub"
 	"github.com/anmol0705/mini-redis-go/internal/resp"
 )
 
@@ -60,6 +61,12 @@ type Config struct {
 	// ShutdownGrace is how long Serve waits for connections to finish
 	// after the context is cancelled (default DefaultShutdownGrace).
 	ShutdownGrace time.Duration
+	// Hub enables SUBSCRIBE/UNSUBSCRIBE. Nil makes them reply with an error.
+	Hub *pubsub.Hub
+	// SubscriberQueue is how many pub/sub messages one connection may have
+	// waiting before it is disconnected as too slow (default
+	// DefaultSubscriberQueue).
+	SubscriberQueue int
 	// Version is reported by INFO.
 	Version string
 	// Logger receives structured logs (default slog.Default()).
@@ -86,8 +93,8 @@ type Server struct {
 // Binding is separate from serving so that the caller learns about a busy
 // port immediately and can read the real address (useful with port 0).
 func Listen(cfg Config) (*Server, error) {
-	if cfg.MaxClients < 0 || cfg.IdleTimeout < 0 || cfg.ShutdownGrace < 0 {
-		return nil, errors.New("server: MaxClients, IdleTimeout and ShutdownGrace must not be negative")
+	if cfg.MaxClients < 0 || cfg.IdleTimeout < 0 || cfg.ShutdownGrace < 0 || cfg.SubscriberQueue < 0 {
+		return nil, errors.New("server: MaxClients, IdleTimeout, ShutdownGrace and SubscriberQueue must not be negative")
 	}
 	if cfg.MaxClients == 0 {
 		cfg.MaxClients = DefaultMaxClients

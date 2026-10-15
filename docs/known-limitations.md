@@ -24,3 +24,28 @@ An honest list, updated every phase. State: end of Phase 1.
 - **Store is lock-based** until the Phase 2 engine.
 - **Not tested here:** real signal delivery (Ctrl+C / SIGTERM) and
   `redis-cli`/`redis-benchmark` compatibility; both are on the Debian checklist.
+
+## Added in Phases 2 and 3
+
+- **Single-threaded data path.** One slow command (`KEYS` on a large keyspace,
+  `LRANGE` of a huge list, `SAVE`) delays every client.
+- **`SET` options:** EX, PX, EXAT, PXAT, NX, XX, KEEPTTL are supported; `GET`,
+  `SETEX`, `GETEX` and friends are not.
+- **`ZADD` has no options** (NX, XX, GT, LT, CH, INCR). `ZRANGE` supports only
+  index ranges and `WITHSCORES`.
+- **No `WATCH`.** Optimistic locking is not available.
+- **No pattern subscriptions** (`PSUBSCRIBE`); channel names are exact.
+- **Pub/sub is not logged or replicated.** Messages published on a primary are
+  not seen by subscribers connected to a replica.
+- **Transactions are not wrapped for the log:** inside the append-only file the
+  commands of an `EXEC` appear one after another without a `MULTI`/`EXEC` frame,
+  so a crash in the middle of writing a transaction can leave it half-applied
+  after recovery.
+- **A panic inside a command is recovered** and answered with an error, but the
+  command may have left its key half-modified.
+- **Order of `HGETALL`, `SMEMBERS`, `KEYS`** is unspecified (Go map order).
+- **Memory accounting is an estimate**: per key `96 + len(key) + value`, with
+  per-element constants (16 bytes per list element, 48 per hash field, 32 per
+  set member, 96 per sorted-set member). It does not measure the Go heap, so
+  `maxmemory` limits the estimate, not the process's real memory use.
+- **No `SELECT`**; there is one database.
