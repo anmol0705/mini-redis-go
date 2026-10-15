@@ -1,6 +1,10 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // Item is one key with its whole value as plain data. A slice of Items is
 // the currency of persistence and replication: the AOF rewrite, snapshots
@@ -105,4 +109,26 @@ func (db *DB) Load(items []Item) error {
 		}
 	}
 	return nil
+}
+
+// Canonical sorts items and the unordered parts inside them (hash pairs, set
+// members) so two dumps of the same data compare equal and encode to the same
+// bytes. Lists and sorted sets are already ordered. It sorts in place.
+func Canonical(items []Item) []Item {
+	for i := range items {
+		it := &items[i]
+		if len(it.Hash) > 1 {
+			pairs := make([][2]string, 0, len(it.Hash)/2)
+			for j := 0; j+1 < len(it.Hash); j += 2 {
+				pairs = append(pairs, [2]string{it.Hash[j], it.Hash[j+1]})
+			}
+			slices.SortFunc(pairs, func(a, b [2]string) int { return strings.Compare(a[0], b[0]) })
+			for j, p := range pairs {
+				it.Hash[2*j], it.Hash[2*j+1] = p[0], p[1]
+			}
+		}
+		slices.Sort(it.Set)
+	}
+	slices.SortFunc(items, func(a, b Item) int { return strings.Compare(a.Key, b.Key) })
+	return items
 }

@@ -1,7 +1,10 @@
 package resp
 
 import (
+	"bufio"
 	"bytes"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -61,5 +64,34 @@ func TestWriterStripsLineBreaksFromLines(t *testing.T) {
 	want := "-ERR bad  +INJECTED\r\n+a b\r\n"
 	if got := buf.String(); got != want {
 		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
+func TestAppendCommandRoundTrip(t *testing.T) {
+	cmds := [][]string{
+		{"PING"},
+		{"SET", "key", "value with \r\n inside"},
+		{"SET", "", ""},
+		{"RPUSH", "l", strings.Repeat("x", 12345), "y"},
+	}
+	var stream []byte
+	total := 0
+	for _, c := range cmds {
+		enc := AppendCommand(nil, c)
+		if len(enc) != EncodedLen(c) {
+			t.Errorf("EncodedLen(%q) = %d; encoding is %d bytes", c, EncodedLen(c), len(enc))
+		}
+		total += len(enc)
+		stream = AppendCommand(stream, c)
+	}
+	if len(stream) != total {
+		t.Fatalf("stream length %d; want %d", len(stream), total)
+	}
+	r := bufio.NewReader(bytes.NewReader(stream))
+	for _, want := range cmds {
+		got, err := ReadCommand(r)
+		if err != nil || !slices.Equal(got, want) {
+			t.Fatalf("ReadCommand = %q, %v; want %q", got, err, want)
+		}
 	}
 }

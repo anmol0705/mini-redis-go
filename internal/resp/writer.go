@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -70,4 +71,41 @@ func (w *Writer) WriteArrayHeader(n int) error {
 // Flush sends everything buffered so far.
 func (w *Writer) Flush() error {
 	return w.w.Flush()
+}
+
+// AppendCommand appends the RESP encoding of a command (an array of bulk
+// strings) to dst and returns the extended slice. The append-only file and the
+// replication stream both use it, so what is logged is byte-for-byte what
+// ReadCommand parses.
+func AppendCommand(dst []byte, args []string) []byte {
+	dst = append(dst, '*')
+	dst = strconv.AppendInt(dst, int64(len(args)), 10)
+	dst = append(dst, '\r', '\n')
+	for _, a := range args {
+		dst = append(dst, '$')
+		dst = strconv.AppendInt(dst, int64(len(a)), 10)
+		dst = append(dst, '\r', '\n')
+		dst = append(dst, a...)
+		dst = append(dst, '\r', '\n')
+	}
+	return dst
+}
+
+// EncodedLen returns len(AppendCommand(nil, args)) without building it.
+// Replicas use it to track the primary's byte offset.
+func EncodedLen(args []string) int {
+	n := 1 + digits(len(args)) + 2
+	for _, a := range args {
+		n += 1 + digits(len(a)) + 2 + len(a) + 2
+	}
+	return n
+}
+
+func digits(n int) int {
+	d := 1
+	for n >= 10 {
+		n /= 10
+		d++
+	}
+	return d
 }
