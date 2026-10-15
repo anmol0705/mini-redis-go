@@ -241,6 +241,12 @@ func (db *DB) Exists(key string) bool { return db.lookup(key) != nil }
 func (db *DB) Delete(key string) bool {
 	e := db.lookup(key)
 	if e == nil {
+		// A replica hides expired keys without removing them. The primary's
+		// explicit DEL must really remove the hidden entry, or it would
+		// linger forever.
+		if raw := db.m[key]; raw != nil && db.replica {
+			db.remove(key, raw)
+		}
 		return false
 	}
 	db.remove(key, e)

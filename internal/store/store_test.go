@@ -821,3 +821,19 @@ func TestParseInt(t *testing.T) {
 		}
 	}
 }
+
+// Regression: on a replica, the primary's DEL for a key that is already
+// logically expired must physically remove it.
+func TestReplicaDeleteRemovesHiddenExpiredKey(t *testing.T) {
+	db := newDB(t)
+	db.SetReplica(true)
+	db.Set("k", "v", db.Now()+10, false)
+	db.SetNow(db.Now() + 50)
+	if db.Delete("k") {
+		t.Error("Delete reported a logically expired key as existing")
+	}
+	if db.Len() != 0 {
+		t.Errorf("hidden key still stored (Len=%d)", db.Len())
+	}
+	check(t, db)
+}
