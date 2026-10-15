@@ -25,8 +25,8 @@ been measured it says so.
   so running commands still reply (decision 004).
 - I chose an **injected `Handler` interface** over a test-only `PANIC`
   command, so production has no debug backdoor.
-- I chose **`RWMutex` first** and will benchmark it against a single-owner
-  goroutine in Phase 2 before replacing it. Measured: not yet.
+- I chose **`RWMutex` first**, then benchmarked it against a single-owner goroutine
+  in Phase 2 before switching (see Phase 2 below for the numbers).
 - I chose **standard library only** (`flag`, `log/slog`, `net`) to keep the
   project explainable end to end.
 
@@ -110,3 +110,24 @@ been measured it says so.
   tested with two independent fake clocks.
 - I chose to **cancel the follower's context on the engine goroutine** at
   promotion, so a late command cannot be applied after `REPLICAOF NO ONE`.
+
+## Phase 6
+
+- I chose to **state properties and fuzz** the four parsers (RESP, command
+  execution, AOF, snapshot) plus glob matching. Result: no failures found in 20 s
+  per target on the first run; `make fuzz-short` repeats it. Property examples:
+  accepted input round-trips; a write's logged form is itself a valid command.
+- I chose a **conformance suite driven only by `redis-cli`** so it can be reused for
+  another implementation. I ran it against real Redis 7.2.12 (Memurai) and against
+  this server: 16 of 16 checks on both. It found one real thing: this `redis-cli`'s
+  `--pipe` needs inline commands, which this server does not support.
+- I chose **not to optimise parsing**: `SET` parses in about 430 ns with 14
+  allocations, while a TCP round trip costs several microseconds. Measure first.
+- I chose **loopback-only pprof, off by default** because profiling endpoints leak
+  internals and can burn CPU.
+- I ran **`staticcheck`, `errcheck` and `ineffassign`** separately because the
+  combined `golangci-lint` could not be installed here; they found five small
+  issues (a dead assignment, three capitalised error strings, an ignored return),
+  fixed with the clean runs recorded.
+- I verified the **README command table with a test**, so it cannot drift from the
+  real command table.
