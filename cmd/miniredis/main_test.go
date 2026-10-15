@@ -119,3 +119,17 @@ func TestRunHelpIsNotAnError(t *testing.T) {
 		t.Errorf("help text lacks -addr:\n%s", stderr.String())
 	}
 }
+
+func TestParseSize(t *testing.T) {
+	good := map[string]int64{"0": 0, "1024": 1024, "1kb": 1024, "2MB": 2 << 20, " 3 gb ": 3 << 30}
+	for in, want := range good {
+		if got, err := parseSize(in); err != nil || got != want {
+			t.Errorf("parseSize(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "-1", "abc", "1tb", "99999999999gb"} {
+		if _, err := parseSize(in); err == nil {
+			t.Errorf("parseSize(%q) succeeded; want an error", in)
+		}
+	}
+}
