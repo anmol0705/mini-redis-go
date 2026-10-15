@@ -1,0 +1,33 @@
+# Minimal golangci-lint configuration (v2 format): errcheck, govet, staticcheck,
+# unused, ineffassign.
+#
+# Status of this file: golangci-lint itself could not be installed on the
+# development machine, so THIS CONFIG FILE IS UNTESTED. The five linters it
+# enables were each run on their own and the project is clean under all of them:
+#   go vet ./...                       (govet)
+#   staticcheck ./...                  (staticcheck + unused)
+#   errcheck -ignoretests ./...        (errcheck, production code)
+#   ineffassign ./...
+# CI (.github/workflows/ci.yml) is the first real run of golangci-lint.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Tests drive the code through assertions on outcomes; a discarded
+      # return value in a test body is not a hidden failure.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+run:
+  timeout: 5m

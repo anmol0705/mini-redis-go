@@ -31,3 +31,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# build output and runtime data
+/bin/
+appendonly.aof
+dump.mrdb
+*.mrdb.tmp
+
