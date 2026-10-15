@@ -81,7 +81,7 @@ func (m *Manager) ServeReplica(ctx context.Context, conn net.Conn, replID string
 // on the engine goroutine.
 func (m *Manager) ReplicaOf(host, port string) error {
 	if n, err := strconv.Atoi(port); err != nil || n <= 0 || n > 65535 {
-		return errors.New("Invalid master port")
+		return errors.New("invalid master port")
 	}
 	prev := m.cur
 	if prev != nil {

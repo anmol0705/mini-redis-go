@@ -150,15 +150,6 @@ func Resolve(args []string) (*Spec, resp.Value) {
 	return s, resp.Value{}
 }
 
-// Lookup returns the spec for a command name, or nil if it is unknown.
-func Lookup(name string) *Spec {
-	s, ok := table[strings.ToUpper(name)]
-	if !ok {
-		return nil
-	}
-	return s
-}
-
 // Execute resolves and runs one command. It is a convenience for callers that
 // do not need to look at the Spec; the engine uses Resolve and Run so it can
 // apply policy in between.
@@ -299,15 +290,6 @@ func buildTable() map[string]*Spec {
 		m[strings.ToUpper(s.Name)] = s
 	}
 	return m
-}
-
-// Names returns the upper-case names of all commands in the table.
-func Names() []string {
-	out := make([]string, 0, len(table))
-	for n := range table {
-		out = append(out, n)
-	}
-	return out
 }
 
 // Hooks connects commands to components that live outside the keyspace:

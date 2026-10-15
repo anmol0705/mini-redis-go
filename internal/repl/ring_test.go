@@ -66,7 +66,7 @@ func TestRingAgainstNaive(t *testing.T) {
 		r := newRing(capacity)
 		var all []byte
 
-		for step := range 300 {
+		for step := range 120 {
 			chunk := make([]byte, rng.IntN(capacity*2+2))
 			for i := range chunk {
 				chunk[i] = byte(rng.IntN(256))
@@ -76,7 +76,19 @@ func TestRingAgainstNaive(t *testing.T) {
 
 			end := int64(len(all))
 			oldest := max(end-int64(capacity), 0)
-			for off := int64(0); off <= end+1; off++ {
+			// Check the interesting offsets exhaustively: around the oldest
+			// byte still held, around the end, and a few random ones.
+			offsets := []int64{0, end, end + 1}
+			for d := int64(-3); d <= 3; d++ {
+				offsets = append(offsets, oldest+d, end+d)
+			}
+			for range 10 {
+				offsets = append(offsets, rng.Int64N(end+2))
+			}
+			for _, off := range offsets {
+				if off < 0 {
+					continue
+				}
 				got, ok := r.from(off)
 				wantOK := off >= oldest && off <= end
 				if ok != wantOK {

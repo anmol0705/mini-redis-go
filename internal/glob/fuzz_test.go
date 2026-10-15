@@ -16,7 +16,7 @@ func FuzzMatch(f *testing.F) {
 		f.Add(s[0], s[1])
 	}
 	f.Fuzz(func(t *testing.T, pattern, s string) {
-		Match(pattern, s)
+		_ = Match(pattern, s) // must not panic or hang
 		if !Match("*", s) {
 			t.Fatalf(`"*" did not match %q`, s)
 		}

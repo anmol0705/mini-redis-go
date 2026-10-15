@@ -121,7 +121,7 @@ func (r *Replica) syncOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // may already be closed by the context hook below
 	// Cancelling ctx closes the socket, which unblocks any read below.
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()

@@ -154,10 +154,10 @@ func New(f File, opts Options) *Log {
 	l.bw = bufio.NewWriterSize(lockedWriter{l}, 64*1024)
 
 	if opts.Policy == FsyncEverySec {
-		ticks, release := opts.Ticks, func() {}
 		var ch <-chan time.Time
-		if ticks != nil {
-			ch, release = ticks()
+		var release func()
+		if opts.Ticks != nil {
+			ch, release = opts.Ticks()
 		} else {
 			t := time.NewTicker(time.Second)
 			ch, release = t.C, t.Stop
@@ -383,10 +383,12 @@ type CorruptError struct {
 	Err    error
 }
 
+// Error implements error, naming the byte offset of the damage.
 func (e *CorruptError) Error() string {
 	return fmt.Sprintf("aof: corrupt data at byte %d: %v", e.Offset, e.Err)
 }
 
+// Unwrap returns the underlying parse error, so errors.Is works through it.
 func (e *CorruptError) Unwrap() error { return e.Err }
 
 type countingReader struct {

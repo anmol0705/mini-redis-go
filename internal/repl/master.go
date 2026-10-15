@@ -274,13 +274,15 @@ func (m *Master) stream(ctx context.Context, conn net.Conn, r *replica, att atta
 			return fmt.Errorf("repl: encode snapshot: %w", err)
 		}
 		att.items = nil
-		fmt.Fprintf(bw, "+FULLRESYNC %s %d\r\n$%d\r\n", att.replID, att.offset, buf.Len())
-		bw.Write(buf.Bytes()) // bufio remembers write errors; Flush below reports them
-		bw.WriteString("\r\n")
+		// A bufio.Writer remembers the first write error and returns it from
+		// Flush, so the individual write results are deliberately not checked.
+		_, _ = fmt.Fprintf(bw, "+FULLRESYNC %s %d\r\n$%d\r\n", att.replID, att.offset, buf.Len())
+		_, _ = bw.Write(buf.Bytes())
+		_, _ = bw.WriteString("\r\n")
 	} else {
 		m.log.Info("partial resync", "replica", r.addr, "offset", att.offset, "bytes", len(att.initial))
-		fmt.Fprintf(bw, "+CONTINUE %s\r\n", att.replID)
-		bw.Write(att.initial)
+		_, _ = fmt.Fprintf(bw, "+CONTINUE %s\r\n", att.replID)
+		_, _ = bw.Write(att.initial)
 	}
 	if err := bw.Flush(); err != nil {
 		return fmt.Errorf("repl: send handshake: %w", err)
@@ -289,13 +291,13 @@ func (m *Master) stream(ctx context.Context, conn net.Conn, r *replica, att atta
 	for {
 		select {
 		case msg := <-r.queue:
-			bw.Write(msg)
+			_, _ = bw.Write(msg) // errors surface at Flush
 			// Write whatever else is already waiting, then flush once.
 		drain:
 			for {
 				select {
 				case more := <-r.queue:
-					bw.Write(more)
+					_, _ = bw.Write(more)
 				default:
 					break drain
 				}

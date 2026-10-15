@@ -179,7 +179,7 @@ func (m *Manager) loadAOF(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("persist: open append-only file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only file: a close error cannot lose data
 
 	var (
 		valid, count int64
@@ -289,7 +289,7 @@ func (m *Manager) Commit() error {
 
 // ---- command.Hooks (engine goroutine) ----
 
-var errBGSaveRunning = errors.New("Background save already in progress")
+var errBGSaveRunning = errors.New("background save already in progress")
 
 // Save writes a snapshot synchronously. It blocks the engine, and so every
 // client, until the file is on disk.
@@ -345,7 +345,7 @@ func (m *Manager) RewriteAOF(db *store.DB) (string, error) {
 		return "", errors.New("the append-only file is not enabled (-appendonly)")
 	}
 	if err := l.BeginRewrite(); err != nil {
-		return "", errors.New("Background append only file rewriting already in progress")
+		return "", errors.New("background append only file rewriting already in progress")
 	}
 	start := time.Now()
 	items := db.Dump() // same engine step as BeginRewrite: snapshot + capture = full state

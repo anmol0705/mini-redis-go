@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"reflect"
 	"slices"
 	"sort"
@@ -410,21 +411,23 @@ func TestReplayOfPropagatedCommandsGivesSameState(t *testing.T) {
 	}
 }
 
-func TestResolveAndLookup(t *testing.T) {
-	if s := Lookup("set"); s == nil || !s.Write || !s.DenyOOM {
-		t.Errorf("Lookup(set) = %+v", s)
+func TestResolveFlags(t *testing.T) {
+	set, _ := Resolve([]string{"set", "k", "v"})
+	if set == nil || !set.Write || !set.DenyOOM || set.Name != "set" {
+		t.Errorf("Resolve(set) = %+v", set)
 	}
-	if s := Lookup("get"); s == nil || s.Write {
-		t.Errorf("Lookup(get) = %+v", s)
+	get, _ := Resolve([]string{"GET", "k"})
+	if get == nil || get.Write {
+		t.Errorf("Resolve(get) = %+v", get)
 	}
-	if Lookup("nosuch") != nil {
-		t.Error("Lookup found an unknown command")
+	if s, e := Resolve([]string{"nosuch"}); s != nil || e.Kind != resp.KindError {
+		t.Error("Resolve accepted an unknown command")
 	}
 	if s, e := Resolve([]string{"GET"}); s != nil || e.Kind != resp.KindError {
 		t.Errorf("Resolve with bad arity = %v, %+v", s, e)
 	}
-	if len(Names()) < 50 {
-		t.Errorf("Names() has only %d entries", len(Names()))
+	if len(table) < 50 {
+		t.Errorf("the table has only %d commands", len(table))
 	}
 }
 
@@ -604,4 +607,25 @@ func sameValue(a, b resp.Value) bool {
 		}
 	}
 	return true
+}
+
+// The README promises a command table; keep it honest. Every command in the
+// real table must appear (in backticks) in README.md.
+func TestReadmeListsEveryCommand(t *testing.T) {
+	data, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme := string(data)
+	for name := range table {
+		if !strings.Contains(readme, "`"+name+"`") && !strings.Contains(readme, "`"+name+" ") {
+			t.Errorf("README.md does not mention command %s", name)
+		}
+	}
+	// Commands answered by the server's session rather than this table.
+	for _, name := range []string{"QUIT", "MULTI", "EXEC", "DISCARD", "SUBSCRIBE", "UNSUBSCRIBE", "MRSYNC"} {
+		if !strings.Contains(readme, "`"+name+"`") {
+			t.Errorf("README.md does not mention session command %s", name)
+		}
+	}
 }
