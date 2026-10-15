@@ -18,8 +18,10 @@ import (
 	"net"
 	"time"
 
+	"github.com/anmol0705/mini-redis-go/internal/aof"
 	"github.com/anmol0705/mini-redis-go/internal/command"
 	"github.com/anmol0705/mini-redis-go/internal/engine"
+	"github.com/anmol0705/mini-redis-go/internal/persist"
 	"github.com/anmol0705/mini-redis-go/internal/pubsub"
 	"github.com/anmol0705/mini-redis-go/internal/server"
 	"github.com/anmol0705/mini-redis-go/internal/store"
@@ -46,14 +48,27 @@ type Config struct {
 	MaxMemoryPolicy  string // noeviction (default), allkeys-lru, allkeys-random, volatile-ttl
 	MaxMemorySamples int    // keys sampled per eviction (default 5)
 
+	// Persistence (see package persist). With AppendOnly false and no
+	// snapshot file nothing is read or written.
+	Dir              string        // data directory (default ".")
+	AppendOnly       bool          // log every write to the append-only file
+	AppendFsync      string        // always, everysec (default) or no
+	DBFilename       string        // snapshot file name (default dump.mrdb)
+	SnapshotInterval time.Duration // background snapshots this often (0 = off)
+
 	// Clock supplies the time; tests inject a fake. Default time.Now.
 	Clock func() time.Time
+
+	// AOFTicks and SnapshotTicks replace the real timers in tests.
+	AOFTicks      func() (<-chan time.Time, func())
+	SnapshotTicks func() (<-chan time.Time, func())
 }
 
 // Node is a running server.
 type Node struct {
 	srv  *server.Server
 	eng  *engine.Engine
+	pers *persist.Manager
 	done chan struct{}
 	err  error
 }
@@ -89,19 +104,50 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 		return nil, err
 	}
 
-	env := &command.Env{Info: srv, Publisher: hub}
+	fsync := aof.FsyncEverySec
+	if cfg.AppendFsync != "" {
+		if fsync, err = aof.ParsePolicy(cfg.AppendFsync); err != nil {
+			_ = srv.Close()
+			return nil, err
+		}
+	}
+	db := store.New(nil)
+	pers, err := persist.New(persist.Config{
+		Dir: cfg.Dir, AppendOnly: cfg.AppendOnly, Fsync: fsync, DBFilename: cfg.DBFilename,
+		SnapshotInterval: cfg.SnapshotInterval, Logger: cfg.Logger,
+		AOFTicks: cfg.AOFTicks, SnapshotTicks: cfg.SnapshotTicks,
+	}, db)
+	if err != nil {
+		_ = srv.Close()
+		return nil, err
+	}
+
+	h := &hooks{pers: pers}
+	env := &command.Env{Info: srv, Publisher: hub, Hooks: h, Sections: h}
 	eng := engine.New(engine.Options{
-		DB:           store.New(nil),
+		DB:           db,
 		Env:          env,
 		Clock:        cfg.Clock,
 		QueueSize:    cfg.QueueSize,
 		MaxMemory:    cfg.MaxMemory,
 		Policy:       policy,
 		EvictSamples: cfg.MaxMemorySamples,
+		Propagator:   pers,
 		Logger:       cfg.Logger,
 	})
+	pers.Attach(eng)
 
-	n := &Node{srv: srv, eng: eng, done: make(chan struct{})}
+	// Restore data before serving anyone. Clients that connect meanwhile wait
+	// in the listen backlog.
+	if err := pers.Load(ctx); err != nil {
+		eng.Close()
+		_ = pers.Close()
+		_ = srv.Close()
+		return nil, err
+	}
+	pers.StartScheduler()
+
+	n := &Node{srv: srv, eng: eng, pers: pers, done: make(chan struct{})}
 	cfg.Logger.Info("listening", "addr", srv.Addr().String(), "version", cfg.Version)
 	go n.run(ctx, cfg.Logger)
 	return n, nil
@@ -119,6 +165,10 @@ func (n *Node) run(ctx context.Context, log *slog.Logger) {
 	defer close(n.done)
 	n.err = n.srv.Serve(ctx, n.eng)
 	n.eng.Close()
+	if err := n.pers.Close(); err != nil {
+		log.Error("closing persistence failed", "err", err)
+		n.err = errors.Join(n.err, err)
+	}
 	log.Info("stopped")
 }
 

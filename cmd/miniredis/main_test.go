@@ -97,6 +97,10 @@ func TestRunRejectsBadFlags(t *testing.T) {
 		{"zero max clients", []string{"-max-clients", "0"}},
 		{"negative idle timeout", []string{"-idle-timeout", "-1s"}},
 		{"bad log level", []string{"-log-level", "shouty"}},
+		{"bad appendonly", []string{"-appendonly", "maybe"}},
+		{"bad appendfsync", []string{"-addr", "127.0.0.1:0", "-appendfsync", "sometimes"}},
+		{"bad maxmemory policy", []string{"-addr", "127.0.0.1:0", "-maxmemory-policy", "lfu"}},
+		{"negative snapshot interval", []string{"-snapshot-interval", "-1s"}},
 		{"stray argument", []string{"extra"}},
 		{"unusable address", []string{"-addr", "not an address"}},
 	}
@@ -131,5 +135,16 @@ func TestParseSize(t *testing.T) {
 		if _, err := parseSize(in); err == nil {
 			t.Errorf("parseSize(%q) succeeded; want an error", in)
 		}
+	}
+}
+
+func TestParseYesNo(t *testing.T) {
+	for in, want := range map[string]bool{"yes": true, "YES": true, "true": true, "on": true, "no": false, "off": false, "false": false} {
+		if got, err := parseYesNo(in); err != nil || got != want {
+			t.Errorf("parseYesNo(%q) = %v, %v", in, got, err)
+		}
+	}
+	if _, err := parseYesNo("maybe"); err == nil {
+		t.Error("parseYesNo accepted maybe")
 	}
 }

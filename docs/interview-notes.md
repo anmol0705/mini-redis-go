@@ -67,3 +67,26 @@ been measured it says so.
 - I chose to **validate at queue time** (unknown command, wrong arity) so
   `EXEC` can return `EXECABORT`, and **not** to roll back runtime errors,
   matching Redis semantics.
+
+## Phase 4
+
+- I chose **logging after success, in absolute form** over logging the raw
+  command, so replay is deterministic regardless of when it happens (tested by
+  replaying with a different clock).
+- I chose **the engine as the only AOF writer** over a separate writer goroutine,
+  so log order equals execution order and `appendfsync always` can fsync before
+  the reply is released. (Decision 007.)
+- I chose **copy-inside-the-engine for BGSAVE** because Go cannot fork. The pause
+  is measured and logged per save and exported as `rdb_last_bgsave_copy_usec`;
+  large-keyspace numbers: TBD - measure on Debian.
+- I chose **capture + swap** for BGREWRITEAOF so concurrent writes are never
+  lost; verified by a test where 83 increments landed during one rewrite and all
+  survived a restart (a single run; the count varies run to run).
+- I chose to **treat EOF inside a record as a torn tail and anything else as
+  corruption**, and tested torn tails at every byte offset of a multi-command log.
+- I chose a **hand-written snapshot format with a CRC32 trailer** over `gob` or
+  JSON, so the format is documented, stable, size-bounded when decoding and
+  independent of Go versions. Every single-byte flip and every truncation of a
+  sample file is detected (tests iterate all offsets).
+- I chose **strict replay** (a failing command stops startup) over Redis's
+  tolerance, so replay bugs show up immediately.

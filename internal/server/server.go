@@ -251,3 +251,8 @@ func (s *Server) shutdown() {
 		<-done
 	}
 }
+
+// Close releases the listening socket of a Server whose Serve was never
+// called (for example because startup failed after Listen). After Serve it is
+// unnecessary: Serve closes the listener itself.
+func (s *Server) Close() error { return s.ln.Close() }

@@ -502,3 +502,8 @@ func (s *State) SetReadOnly(on bool) { s.e.SetReadOnly(on) }
 
 // ReadOnly reports whether the engine is in replica mode.
 func (s *State) ReadOnly() bool { return s.e.readOnly }
+
+// Done returns a channel that is closed once the engine goroutine has
+// exited. After that, anything the engine owned (the DB) may be touched by
+// other goroutines, because the exit happens-before the close.
+func (e *Engine) Done() <-chan struct{} { return e.doneCh }

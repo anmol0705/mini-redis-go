@@ -49,6 +49,11 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	samples := fs.Int("maxmemory-samples", 5, "keys sampled per eviction")
 	queue := fs.Int("queue-size", 1024, "engine request queue capacity")
 	subQueue := fs.Int("subscriber-queue", 256, "pub/sub messages a subscriber may lag by before it is disconnected")
+	dir := fs.String("dir", ".", "directory for the append-only file and snapshot")
+	appendOnly := fs.String("appendonly", "no", "log every write to an append-only file: yes or no")
+	appendFsync := fs.String("appendfsync", "everysec", "fsync policy of the append-only file: always, everysec or no")
+	dbFilename := fs.String("dbfilename", "dump.mrdb", "snapshot file name (inside -dir)")
+	snapEvery := fs.Duration("snapshot-interval", 0, "take a background snapshot this often, and one at shutdown (0 = off)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -66,6 +71,13 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	if *samples < 1 || *queue < 1 || *subQueue < 1 {
 		return errors.New("-maxmemory-samples, -queue-size and -subscriber-queue must be at least 1")
+	}
+	aofOn, err := parseYesNo(*appendOnly)
+	if err != nil {
+		return fmt.Errorf("invalid -appendonly: %w", err)
+	}
+	if *snapEvery < 0 {
+		return errors.New("-snapshot-interval must not be negative")
 	}
 	memBytes, err := parseSize(*maxMemory)
 	if err != nil {
@@ -87,10 +99,26 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 		Logger:           logger,
 		QueueSize:        *queue,
 		SubscriberQueue:  *subQueue,
+		Dir:              *dir,
+		AppendOnly:       aofOn,
+		AppendFsync:      *appendFsync,
+		DBFilename:       *dbFilename,
+		SnapshotInterval: *snapEvery,
 		MaxMemory:        memBytes,
 		MaxMemoryPolicy:  *policy,
 		MaxMemorySamples: *samples,
 	})
+}
+
+// parseYesNo accepts yes/no, true/false and on/off.
+func parseYesNo(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "yes", "true", "on", "1":
+		return true, nil
+	case "no", "false", "off", "0":
+		return false, nil
+	}
+	return false, fmt.Errorf("%q is not yes or no", s)
 }
 
 // parseSize reads a byte count with an optional kb/mb/gb suffix (powers of
