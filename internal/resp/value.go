@@ -13,13 +13,17 @@ const (
 	KindInteger
 	KindBulkString
 	KindNull
+	KindArray
 )
 
 // Value is a reply as plain data. Handlers build one; the server writes it.
+// Keeping replies as data (not bytes) lets later phases pass them between
+// goroutines and queue them for transactions.
 type Value struct {
-	Kind Kind
-	Str  string // used by simple strings, errors and bulk strings
-	Int  int64  // used by integers
+	Kind  Kind
+	Str   string  // used by simple strings, errors and bulk strings
+	Int   int64   // used by integers
+	Elems []Value // used by arrays
 }
 
 // SimpleString returns a status reply such as OK.
@@ -37,7 +41,11 @@ func BulkString(s string) Value { return Value{Kind: KindBulkString, Str: s} }
 // Null returns the "no such value" reply.
 func Null() Value { return Value{Kind: KindNull} }
 
-// WriteValue writes v in RESP format.
+// Array returns an array reply. Calling it with no elements gives the
+// empty array ("*0"), which is different from Null.
+func Array(elems ...Value) Value { return Value{Kind: KindArray, Elems: elems} }
+
+// WriteValue writes v in RESP format. Arrays are written recursively.
 func (w *Writer) WriteValue(v Value) error {
 	switch v.Kind {
 	case KindSimpleString:
@@ -50,6 +58,16 @@ func (w *Writer) WriteValue(v Value) error {
 		return w.WriteBulkString(v.Str)
 	case KindNull:
 		return w.WriteNull()
+	case KindArray:
+		if err := w.WriteArrayHeader(len(v.Elems)); err != nil {
+			return err
+		}
+		for _, e := range v.Elems {
+			if err := w.WriteValue(e); err != nil {
+				return err
+			}
+		}
+		return nil
 	default:
 		return fmt.Errorf("resp: unknown value kind %d", v.Kind)
 	}
