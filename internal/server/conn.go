@@ -51,6 +51,7 @@ type connection struct {
 
 	mu       sync.Mutex // guards stopping and deadline updates
 	stopping bool
+	stopCh   chan struct{} // closed by stop(), for long-running modes
 
 	// Push goroutine for subscribed connections (see startPusher).
 	pushQuit chan struct{}
@@ -59,7 +60,7 @@ type connection struct {
 
 func newConnection(nc net.Conn, idle time.Duration) *connection {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &connection{Conn: nc, w: resp.NewWriter(nc), idle: idle, ctx: ctx, cancel: cancel}
+	return &connection{Conn: nc, w: resp.NewWriter(nc), idle: idle, ctx: ctx, cancel: cancel, stopCh: make(chan struct{})}
 }
 
 // forceClose cancels the connection's context and closes the socket.
@@ -109,6 +110,9 @@ func (c *connection) Read(p []byte) (int, error) {
 // already buffered are still executed.
 func (c *connection) stop() {
 	c.mu.Lock()
+	if !c.stopping {
+		close(c.stopCh)
+	}
 	c.stopping = true
 	_ = c.Conn.SetReadDeadline(time.Now()) // wakes a blocked Read; errors mean it is already dead
 	c.mu.Unlock()
@@ -228,7 +232,46 @@ func (s *Server) serveConn(c *connection, h Handler) {
 			}
 			return
 		}
+		if req := sess.takeSync(); req != nil {
+			s.serveReplica(c, req)
+			return
+		}
 	}
+}
+
+// serveReplica hands a connection that sent MRSYNC to the replication code and
+// returns when the replica is gone. The connection is closed by the caller.
+func (s *Server) serveReplica(c *connection, req *syncRequest) {
+	if s.cfg.Replication == nil {
+		c.replyAndClose("ERR replication is not enabled on this server")
+		return
+	}
+	if err := c.flush(); err != nil {
+		return
+	}
+	// Graceful shutdown must end the stream: stop() closes stopCh, which
+	// cancels the context given to the replication code.
+	ctx, cancel := context.WithCancel(c.ctx)
+	var watcher sync.WaitGroup
+	watcher.Go(func() {
+		select {
+		case <-c.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	})
+	defer func() {
+		cancel()
+		watcher.Wait()
+	}()
+
+	s.log.Debug("replica attached", "remote", c.RemoteAddr())
+	served, err := s.cfg.Replication.ServeReplica(ctx, c.Conn, req.replID, req.offset)
+	if !served && err != nil {
+		c.replyAndClose("ERR " + err.Error())
+		return
+	}
+	s.log.Debug("replica detached", "remote", c.RemoteAddr(), "err", err)
 }
 
 // readFailed decides what to do with the error that ended the read loop.

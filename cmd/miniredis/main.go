@@ -54,6 +54,9 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	appendFsync := fs.String("appendfsync", "everysec", "fsync policy of the append-only file: always, everysec or no")
 	dbFilename := fs.String("dbfilename", "dump.mrdb", "snapshot file name (inside -dir)")
 	snapEvery := fs.Duration("snapshot-interval", 0, "take a background snapshot this often, and one at shutdown (0 = off)")
+	replicaOf := fs.String("replicaof", "", `start as a replica of "host port"`)
+	backlog := fs.String("repl-backlog-size", "1mb", "bytes of replication stream kept for partial resyncs")
+	replQueue := fs.Int("repl-queue-size", 8192, "commands buffered per replica before it is dropped")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -79,6 +82,13 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	if *snapEvery < 0 {
 		return errors.New("-snapshot-interval must not be negative")
 	}
+	backlogBytes, err := parseSize(*backlog)
+	if err != nil || backlogBytes < 1 {
+		return fmt.Errorf("invalid -repl-backlog-size %q", *backlog)
+	}
+	if *replQueue < 1 {
+		return errors.New("-repl-queue-size must be at least 1")
+	}
 	memBytes, err := parseSize(*maxMemory)
 	if err != nil {
 		return fmt.Errorf("invalid -maxmemory: %w", err)
@@ -99,6 +109,9 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 		Logger:           logger,
 		QueueSize:        *queue,
 		SubscriberQueue:  *subQueue,
+		ReplicaOf:        *replicaOf,
+		ReplBacklogSize:  int(backlogBytes),
+		ReplQueueSize:    *replQueue,
 		Dir:              *dir,
 		AppendOnly:       aofOn,
 		AppendFsync:      *appendFsync,

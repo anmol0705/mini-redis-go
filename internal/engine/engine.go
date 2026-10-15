@@ -507,3 +507,15 @@ func (s *State) ReadOnly() bool { return s.e.readOnly }
 // exited. After that, anything the engine owned (the DB) may be touched by
 // other goroutines, because the exit happens-before the close.
 func (e *Engine) Done() <-chan struct{} { return e.doneCh }
+
+// ApplyFromMaster runs a command received from the primary on a replica: the
+// read-only and maxmemory checks are skipped (the primary already enforced its
+// own), and the command is logged like any other write. Replicas use it inside
+// Exec so that the check "am I still following this primary?" and the apply
+// happen in one engine step.
+func (s *State) ApplyFromMaster(args []string) resp.Value {
+	saved := s.e.mode
+	s.e.mode = modeMaster
+	defer func() { s.e.mode = saved }()
+	return s.e.exec(args)
+}

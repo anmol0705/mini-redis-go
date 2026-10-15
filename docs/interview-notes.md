@@ -90,3 +90,23 @@ been measured it says so.
   sample file is detected (tests iterate all offsets).
 - I chose **strict replay** (a failing command stops startup) over Redis's
   tolerance, so replay bugs show up immediately.
+
+## Phase 5
+
+- I chose an **incremental memory estimate** over reading the Go heap: O(1),
+  deterministic, verified against a full recount after random operations.
+  It is not the real RSS (stated in known-limitations).
+- I chose **sampled LRU (5 keys)** over an exact list: no per-read cost and no
+  extra pointers. I have not measured hit-rate quality against true LRU:
+  TBD - measure on Debian.
+- I chose **a private replication protocol** over implementing PSYNC/RDB, and
+  say so in the README and decision 008.
+- I chose to **attach a replica inside the engine** so snapshot and stream have no
+  gap; a test with a writer racing the full sync (757 increments in one run, all
+  present afterwards) checks it.
+- I chose **drop the replica** over blocking when its queue fills, so the primary
+  never stalls; tested with a replica that stops reading.
+- I chose **`DEL` on expiry** over letting replicas expire by their own clock;
+  tested with two independent fake clocks.
+- I chose to **cancel the follower's context on the engine goroutine** at
+  promotion, so a late command cannot be applied after `REPLICAOF NO ONE`.

@@ -388,6 +388,26 @@ func (m *Manager) abortRewrite(tmp string) {
 	}
 }
 
+// ResetAOF replaces the append-only file's contents with exactly items. A
+// replica calls it (on the engine goroutine) after a full resync replaced its
+// data, so that replaying the file later gives the same state. It fails if a
+// background rewrite is running; the caller retries.
+func (m *Manager) ResetAOF(items []store.Item) error {
+	l := m.aofLog.Load()
+	if l == nil {
+		return nil
+	}
+	if err := l.BeginRewrite(); err != nil {
+		return err
+	}
+	tmp := m.aofPath + ".rewrite"
+	if err := writeAOFFile(tmp, items); err != nil {
+		l.AbortRewrite(tmp)
+		return err
+	}
+	return l.FinishRewrite(tmp)
+}
+
 // InfoSection supplies the "persistence" section of INFO.
 func (m *Manager) InfoSection(name string) (string, bool) {
 	if name != "persistence" {

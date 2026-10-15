@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/anmol0705/mini-redis-go/internal/aof"
@@ -23,6 +24,8 @@ import (
 	"github.com/anmol0705/mini-redis-go/internal/engine"
 	"github.com/anmol0705/mini-redis-go/internal/persist"
 	"github.com/anmol0705/mini-redis-go/internal/pubsub"
+	"github.com/anmol0705/mini-redis-go/internal/repl"
+	"github.com/anmol0705/mini-redis-go/internal/resp"
 	"github.com/anmol0705/mini-redis-go/internal/server"
 	"github.com/anmol0705/mini-redis-go/internal/store"
 )
@@ -56,6 +59,14 @@ type Config struct {
 	DBFilename       string        // snapshot file name (default dump.mrdb)
 	SnapshotInterval time.Duration // background snapshots this often (0 = off)
 
+	// Replication. ReplicaOf ("host port" or "host:port") starts the node as
+	// a replica of that primary.
+	ReplicaOf       string
+	ReplBacklogSize int           // bytes kept for partial resyncs (default 1 MiB)
+	ReplQueueSize   int           // commands buffered per replica before it is dropped
+	ReplRetry       time.Duration // pause between connection attempts (default 1s)
+	ReplDial        repl.DialFunc // tests use it to cut the link
+
 	// Clock supplies the time; tests inject a fake. Default time.Now.
 	Clock func() time.Time
 
@@ -69,6 +80,7 @@ type Node struct {
 	srv  *server.Server
 	eng  *engine.Engine
 	pers *persist.Manager
+	repl *repl.Manager
 	done chan struct{}
 	err  error
 }
@@ -89,8 +101,16 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	}
 
 	hub := pubsub.NewHub()
+	applier := &replApplier{log: cfg.Logger}
+	rm := repl.NewManager(repl.Config{
+		Master:     repl.MasterConfig{BacklogSize: cfg.ReplBacklogSize, QueueSize: cfg.ReplQueueSize, Logger: cfg.Logger},
+		RetryDelay: cfg.ReplRetry,
+		Dial:       cfg.ReplDial,
+		Logger:     cfg.Logger,
+	}, applier)
 	srv, err := server.Listen(server.Config{
 		Hub:             hub,
+		Replication:     rm,
 		SubscriberQueue: cfg.SubscriberQueue,
 		Addr:            cfg.Addr,
 		MaxClients:      cfg.MaxClients,
@@ -122,7 +142,7 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 		return nil, err
 	}
 
-	h := &hooks{pers: pers}
+	h := &hooks{pers: pers, repl: rm}
 	env := &command.Env{Info: srv, Publisher: hub, Hooks: h, Sections: h}
 	eng := engine.New(engine.Options{
 		DB:           db,
@@ -132,25 +152,55 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 		MaxMemory:    cfg.MaxMemory,
 		Policy:       policy,
 		EvictSamples: cfg.MaxMemorySamples,
-		Propagator:   pers,
+		Propagator:   multiPropagator{pers, rm}, // AOF first, then the replication feed
 		Logger:       cfg.Logger,
 	})
 	pers.Attach(eng)
+	rm.Attach(eng)
+	applier.eng, applier.pers = eng, pers
 
 	// Restore data before serving anyone. Clients that connect meanwhile wait
 	// in the listen backlog.
 	if err := pers.Load(ctx); err != nil {
 		eng.Close()
+		rm.Close()
 		_ = pers.Close()
 		_ = srv.Close()
 		return nil, err
 	}
 	pers.StartScheduler()
+	if cfg.ReplicaOf != "" {
+		host, port, err := splitHostPort(cfg.ReplicaOf)
+		if err == nil {
+			if r := eng.Execute(ctx, []string{"REPLICAOF", host, port}); r.Kind == resp.KindError {
+				err = errors.New(r.Str)
+			}
+		}
+		if err != nil {
+			eng.Close()
+			rm.Close()
+			_ = pers.Close()
+			_ = srv.Close()
+			return nil, fmt.Errorf("app: replicaof %q: %w", cfg.ReplicaOf, err)
+		}
+	}
 
-	n := &Node{srv: srv, eng: eng, pers: pers, done: make(chan struct{})}
+	n := &Node{srv: srv, eng: eng, pers: pers, repl: rm, done: make(chan struct{})}
 	cfg.Logger.Info("listening", "addr", srv.Addr().String(), "version", cfg.Version)
 	go n.run(ctx, cfg.Logger)
 	return n, nil
+}
+
+// splitHostPort accepts "host port" or "host:port".
+func splitHostPort(s string) (host, port string, err error) {
+	if f := strings.Fields(s); len(f) == 2 {
+		return f[0], f[1], nil
+	}
+	h, p, err := net.SplitHostPort(s)
+	if err != nil {
+		return "", "", errors.New(`want "host port" or "host:port"`)
+	}
+	return h, p, nil
 }
 
 func orDefault(s, def string) string {
@@ -165,6 +215,7 @@ func (n *Node) run(ctx context.Context, log *slog.Logger) {
 	defer close(n.done)
 	n.err = n.srv.Serve(ctx, n.eng)
 	n.eng.Close()
+	n.repl.Close() // after the engine: the replica goroutine may be waiting on it
 	if err := n.pers.Close(); err != nil {
 		log.Error("closing persistence failed", "err", err)
 		n.err = errors.Join(n.err, err)

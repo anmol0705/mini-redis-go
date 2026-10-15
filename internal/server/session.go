@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/anmol0705/mini-redis-go/internal/command"
@@ -46,6 +47,7 @@ const (
 	cmdSubscribe
 	cmdUnsubscribe
 	cmdPing
+	cmdSync
 )
 
 // classify recognises session-level commands without allocating (the name is
@@ -64,6 +66,10 @@ func classify(name string) sessionCmd {
 	case 5:
 		if strings.EqualFold(name, "MULTI") {
 			return cmdMulti
+		}
+	case 6:
+		if strings.EqualFold(name, "MRSYNC") {
+			return cmdSync
 		}
 	case 7:
 		if strings.EqualFold(name, "DISCARD") {
@@ -104,7 +110,35 @@ type session struct {
 	onSub      func(*pubsub.Subscriber)
 	onOverflow func()
 
+	sync *syncRequest // set by MRSYNC; the connection loop then hands over
+
 	out []resp.Value // reused result slice (valid until the next execute)
+}
+
+// syncRequest is a parsed "MRSYNC <replid> <offset>".
+type syncRequest struct {
+	replID string
+	offset int64
+}
+
+// takeSync returns and clears a pending replication request.
+func (s *session) takeSync() *syncRequest {
+	r := s.sync
+	s.sync = nil
+	return r
+}
+
+func (s *session) startSync(args []string) []resp.Value {
+	if len(args) != 3 {
+		return s.one(resp.Error("ERR wrong number of arguments for 'mrsync' command"))
+	}
+	offset, err := strconv.ParseInt(args[2], 10, 64)
+	if err != nil || offset < -1 || len(args[1]) > 64 {
+		return s.one(resp.Error("ERR invalid replication id or offset"))
+	}
+	s.sync = &syncRequest{replID: args[1], offset: offset}
+	s.out = s.out[:0]
+	return s.out
 }
 
 func newSession(h Handler, hub *pubsub.Hub, queueSize int, onSubscribe func(*pubsub.Subscriber), onOverflow func()) *session {
@@ -142,6 +176,12 @@ func (s *session) execute(ctx context.Context, args []string) (replies []resp.Va
 
 	if kind == cmdQuit {
 		return s.one(replyOK), true
+	}
+	if kind == cmdSync {
+		if s.inTx || s.subscribed() {
+			return s.one(errNotInTx), false
+		}
+		return s.startSync(args), false
 	}
 	if s.subscribed() {
 		switch kind {

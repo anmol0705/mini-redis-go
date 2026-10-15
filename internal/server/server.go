@@ -48,6 +48,13 @@ type Handler interface {
 	ExecuteAtomic(ctx context.Context, cmds [][]string) []resp.Value
 }
 
+// ReplicaServer takes over a connection whose client sent MRSYNC and streams
+// the replication feed on it. served is false if it failed before writing to
+// conn, in which case the server replies with the error.
+type ReplicaServer interface {
+	ServeReplica(ctx context.Context, conn net.Conn, replID string, offset int64) (served bool, err error)
+}
+
 // Config holds the server's tunable limits. The zero value of every field
 // selects a safe default.
 type Config struct {
@@ -67,6 +74,9 @@ type Config struct {
 	// waiting before it is disconnected as too slow (default
 	// DefaultSubscriberQueue).
 	SubscriberQueue int
+	// Replication enables MRSYNC (a replica asking to be served). Nil makes
+	// MRSYNC reply with an error.
+	Replication ReplicaServer
 	// Version is reported by INFO.
 	Version string
 	// Logger receives structured logs (default slog.Default()).
