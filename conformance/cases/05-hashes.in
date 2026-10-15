@@ -1,0 +1,13 @@
+FLUSHALL
+HSET h f1 v1
+HSET h f1 v2 f2 v3
+HGET h f1
+HGET h nope
+HEXISTS h f2
+HEXISTS h zz
+HLEN h
+HDEL h f1 zz
+HGETALL h
+HDEL h f2
+EXISTS h
+HGETALL h

@@ -1,0 +1,21 @@
+FLUSHALL
+ZADD z 1 a 2 b 3 c
+ZADD z 10 a
+ZRANGE z 0 -1
+ZRANGE z 0 -1 WITHSCORES
+ZRANK z a
+ZRANK z nope
+ZSCORE z c
+ZSCORE z nope
+ZCARD z
+ZADD z 1.5 d
+ZSCORE z d
+ZRANGE z -2 -1
+ZRANK z d
+ZADD z -inf low +inf high
+ZRANGE z 0 0
+ZRANGE z -1 -1
+ZREM z a nope
+ZREM z b c d low high
+EXISTS z
+ZADD z notafloat m

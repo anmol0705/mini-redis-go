@@ -1,0 +1,34 @@
+FLUSHALL
+SET n 10
+INCR n
+INCRBY n 5
+DECR n
+DECRBY n 20
+GET n
+APPEND s abc
+APPEND s def
+GET s
+STRLEN s
+STRLEN nothing
+MSET a 1 b 2 c 3
+MGET a b c nothing
+SET k v NX
+SET k v2 NX
+SET k v3 XX
+GET k
+SET missing x XX
+EXISTS missing
+SET e v EX 100
+PERSIST e
+TTL e
+SET e2 v PX 100000
+SET e2 v2 KEEPTTL
+PERSIST e2
+SET x notanumber
+INCR x
+INCRBY n abc
+SET big 9223372036854775807
+INCR big
+SET k v EX 0
+SET k v EX abc
+SET k v NX XX

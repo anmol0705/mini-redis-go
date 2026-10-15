@@ -1,0 +1,3 @@
+FLUSHALL
+PUBLISH nobody-listens hello
+CLIENT SETNAME conformance

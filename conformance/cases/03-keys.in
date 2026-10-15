@@ -1,0 +1,33 @@
+FLUSHALL
+SET user:1 a
+SET user:2 b
+SET order:1 c
+KEYS order:*
+KEYS nomatch*
+KEYS order:?
+KEYS order:[0-9]
+TYPE user:1
+TYPE nope
+RPUSH l x
+TYPE l
+HSET h f v
+TYPE h
+SADD s m
+TYPE s
+ZADD z 1 m
+TYPE z
+EXPIRE user:1 100
+EXPIRE nope 100
+TTL nope
+PTTL nope
+TTL order:1
+PERSIST user:1
+PERSIST user:1
+EXPIRE user:2 -1
+EXISTS user:2
+PEXPIRE user:1 100000
+EXPIREAT user:1 99999999999
+PEXPIREAT order:1 99999999999999
+DBSIZE
+FLUSHALL
+DBSIZE

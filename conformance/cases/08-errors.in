@@ -1,0 +1,13 @@
+FLUSHALL
+SET s v
+LPUSH s x
+RPUSH l a
+GET l
+HGET l f
+SADD l m
+ZADD l 1 m
+INCR l
+GET
+SET k
+EXPIRE l abc
+TYPE

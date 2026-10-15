@@ -1,0 +1,11 @@
+FLUSHALL
+PING
+PING hello
+ECHO world
+SET greeting "hello world"
+GET greeting
+GET missing
+EXISTS greeting missing greeting
+DEL greeting missing
+EXISTS greeting
+DBSIZE
