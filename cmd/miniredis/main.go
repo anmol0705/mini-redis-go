@@ -19,7 +19,7 @@ import (
 )
 
 // version is reported by INFO.
-const version = "0.2.0"
+const version = "1.0.0"
 
 func main() {
 	// SIGINT is Ctrl+C. SIGTERM is what `kill` and service managers send.
