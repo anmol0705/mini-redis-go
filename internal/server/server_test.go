@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -340,6 +341,7 @@ func TestGracefulShutdownLeavesNoGoroutines(t *testing.T) {
 	if err := ts.stop(t); err != nil {
 		t.Fatalf("Serve returned %v; want nil", err)
 	}
+	ts.eng.Close() // the engine is part of the stack under test: it must exit too
 	for _, c := range clients {
 		c.expectClosed(t)
 	}
@@ -454,7 +456,7 @@ func TestServeReturnsErrorWhenListenerIsClosedUnderneath(t *testing.T) {
 func TestSessionQuitIsCaseInsensitive(t *testing.T) {
 	s := newSession(funcHandler(func([]string) resp.Value { return resp.Error("must not be called") }))
 	for _, name := range []string{"QUIT", "quit", "Quit"} {
-		reply, closeAfter := s.execute([]string{name})
+		reply, closeAfter := s.execute(context.Background(), []string{name})
 		if !closeAfter || reply.Kind != resp.KindSimpleString || reply.Str != "OK" {
 			t.Errorf("%s: reply=%+v closeAfter=%v", name, reply, closeAfter)
 		}

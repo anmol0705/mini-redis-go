@@ -34,11 +34,17 @@ const (
 	DefaultShutdownGrace = 5 * time.Second
 )
 
-// Handler executes one parsed command. It is declared here, where it is
-// used, so tests can substitute their own (for example one that panics).
-// Execute is called from many connection goroutines at once.
+// Handler executes parsed commands. It is declared here, where it is used,
+// so tests can substitute their own (for example one that panics). Its
+// methods are called from many connection goroutines at once. The engine is
+// the production implementation.
 type Handler interface {
-	Execute(args []string) resp.Value
+	// Execute runs one command. ctx is cancelled only when the server gives
+	// up on the connection (forced close), never during a graceful shutdown.
+	Execute(ctx context.Context, args []string) resp.Value
+	// ExecuteAtomic runs the commands in order with nothing interleaved and
+	// returns one reply per command (used by EXEC).
+	ExecuteAtomic(ctx context.Context, cmds [][]string) []resp.Value
 }
 
 // Config holds the server's tunable limits. The zero value of every field
@@ -199,7 +205,7 @@ func (s *Server) release(c *connection) {
 	s.mu.Lock()
 	delete(s.conns, c)
 	s.mu.Unlock()
-	_ = c.Close() // the peer may already have closed it; nothing to do about an error
+	c.forceClose() // the peer may already have closed it; nothing to do about an error
 }
 
 // shutdown stops the server: no new connections, let running commands
@@ -230,7 +236,7 @@ func (s *Server) shutdown() {
 		s.log.Warn("grace period over; closing remaining connections")
 		s.mu.Lock()
 		for c := range s.conns {
-			_ = c.Close() // unblocks any goroutine stuck reading or writing
+			c.forceClose() // unblocks any goroutine stuck reading or writing
 		}
 		s.mu.Unlock()
 		// A handler stuck inside Execute cannot be interrupted from here;

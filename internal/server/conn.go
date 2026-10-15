@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -36,12 +37,23 @@ type connection struct {
 	w    *resp.Writer
 	idle time.Duration
 
+	// ctx is cancelled when the connection is force-closed or released.
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	mu       sync.Mutex // guards stopping and deadline updates
 	stopping bool
 }
 
 func newConnection(nc net.Conn, idle time.Duration) *connection {
-	return &connection{Conn: nc, w: resp.NewWriter(nc), idle: idle}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &connection{Conn: nc, w: resp.NewWriter(nc), idle: idle, ctx: ctx, cancel: cancel}
+}
+
+// forceClose cancels the connection's context and closes the socket.
+func (c *connection) forceClose() {
+	c.cancel()
+	_ = c.Conn.Close()
 }
 
 // Read implements io.Reader for the bufio.Reader of serveConn.
@@ -114,7 +126,7 @@ func (s *Server) serveConn(c *connection, h Handler) {
 			return
 		}
 
-		reply, closeAfter := sess.execute(args)
+		reply, closeAfter := sess.execute(c.ctx, args)
 		if err := c.w.WriteValue(reply); err != nil {
 			s.log.Debug("write failed", "remote", c.RemoteAddr(), "err", err)
 			return

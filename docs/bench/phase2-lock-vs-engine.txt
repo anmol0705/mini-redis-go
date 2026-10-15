@@ -1,0 +1,27 @@
+# Phase 2: mutex handler vs single-owner engine
+# Command: go test -run '^$' -bench 'Handler|TCP' -benchtime 3s -count 3 ./internal/server
+# Machine: 12th Gen Intel(R) Core(TM) i5-1230U, 12 logical CPUs, Windows 11, Go 1.25.3, loopback TCP.
+# Debian numbers: TBD - measure on Debian
+
+goos: windows
+goarch: amd64
+cpu: 12th Gen Intel(R) Core(TM) i5-1230U
+BenchmarkHandler/locked-12         	 9632070	       440.7 ns/op	   2268950 cmd/s
+BenchmarkHandler/locked-12         	 7021276	       520.2 ns/op	   1922373 cmd/s
+BenchmarkHandler/locked-12         	 7101939	       506.3 ns/op	   1974977 cmd/s
+BenchmarkHandler/engine-12         	 4202990	       848.0 ns/op	   1179197 cmd/s
+BenchmarkHandler/engine-12         	 4007798	       860.0 ns/op	   1162730 cmd/s
+BenchmarkHandler/engine-12         	 4244649	      1261 ns/op	    792741 cmd/s
+BenchmarkTCP/locked/pipeline=1-12  	  560420	     12073 ns/op	     82829 cmd/s
+BenchmarkTCP/locked/pipeline=1-12  	  304099	     11422 ns/op	     87551 cmd/s
+BenchmarkTCP/locked/pipeline=1-12  	  276648	     11263 ns/op	     88784 cmd/s
+BenchmarkTCP/locked/pipeline=16-12 	  109531	     33091 ns/op	    483397 cmd/s
+BenchmarkTCP/locked/pipeline=16-12 	  125830	     30146 ns/op	    530722 cmd/s
+BenchmarkTCP/locked/pipeline=16-12 	  144450	     23836 ns/op	    671235 cmd/s
+BenchmarkTCP/engine/pipeline=1-12  	  446814	      7659 ns/op	    130558 cmd/s
+BenchmarkTCP/engine/pipeline=1-12  	  465770	      7486 ns/op	    133586 cmd/s
+BenchmarkTCP/engine/pipeline=1-12  	  498264	      7321 ns/op	    136586 cmd/s
+BenchmarkTCP/engine/pipeline=16-12 	  128964	     27826 ns/op	    574990 cmd/s
+BenchmarkTCP/engine/pipeline=16-12 	  144314	     26129 ns/op	    612232 cmd/s
+BenchmarkTCP/engine/pipeline=16-12 	  141847	     26947 ns/op	    593672 cmd/s
+ok  	github.com/anmol0705/mini-redis-go/internal/server	80.815s

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/anmol0705/mini-redis-go/internal/command"
+	"github.com/anmol0705/mini-redis-go/internal/engine"
 	"github.com/anmol0705/mini-redis-go/internal/resp"
 	"github.com/anmol0705/mini-redis-go/internal/store"
 )
@@ -67,7 +68,7 @@ func dialClient(addr string) (*client, error) {
 	return &client{conn: conn, r: bufio.NewReader(conn)}, nil
 }
 
-func dial(t *testing.T, addr string) *client {
+func dial(t testing.TB, addr string) *client {
 	t.Helper()
 	c, err := dialClient(addr)
 	if err != nil {
@@ -178,11 +179,12 @@ type testServer struct {
 	done   chan error
 	once   sync.Once
 	err    error
+	eng    *engine.Engine // nil when the test supplied its own handler
 }
 
 // startServer listens on 127.0.0.1:0 and serves h (default: the real command
 // dispatcher). The server is stopped by t.Cleanup if the test does not do so.
-func startServer(t *testing.T, cfg Config, h Handler) *testServer {
+func startServer(t testing.TB, cfg Config, h Handler) *testServer {
 	t.Helper()
 	if cfg.Addr == "" {
 		cfg.Addr = "127.0.0.1:0"
@@ -194,18 +196,25 @@ func startServer(t *testing.T, cfg Config, h Handler) *testServer {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
+	var eng *engine.Engine
 	if h == nil {
-		h = command.New(store.New(), srv)
+		eng = engine.New(engine.Options{
+			DB:     store.New(nil),
+			Env:    &command.Env{Info: srv},
+			Logger: cfg.Logger,
+		})
+		t.Cleanup(eng.Close) // registered first, so it runs after the server has stopped
+		h = eng
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	ts := &testServer{Server: srv, addr: srv.Addr().String(), cancel: cancel, done: make(chan error, 1)}
+	ts := &testServer{Server: srv, addr: srv.Addr().String(), cancel: cancel, done: make(chan error, 1), eng: eng}
 	go func() { ts.done <- srv.Serve(ctx, h) }()
 	t.Cleanup(func() { _ = ts.stop(t) })
 	return ts
 }
 
 // stop cancels the server and waits (with a deadline) for Serve to return.
-func (ts *testServer) stop(t *testing.T) error {
+func (ts *testServer) stop(t testing.TB) error {
 	ts.once.Do(func() {
 		ts.cancel()
 		select {
@@ -304,4 +313,12 @@ func waitFor(t *testing.T, ch <-chan struct{}, what string) {
 // funcHandler adapts a function to the Handler interface.
 type funcHandler func(args []string) resp.Value
 
-func (f funcHandler) Execute(args []string) resp.Value { return f(args) }
+func (f funcHandler) Execute(_ context.Context, args []string) resp.Value { return f(args) }
+
+func (f funcHandler) ExecuteAtomic(_ context.Context, cmds [][]string) []resp.Value {
+	out := make([]resp.Value, len(cmds))
+	for i, c := range cmds {
+		out[i] = f(c)
+	}
+	return out
+}
