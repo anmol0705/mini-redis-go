@@ -54,6 +54,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	appendFsync := fs.String("appendfsync", "everysec", "fsync policy of the append-only file: always, everysec or no")
 	dbFilename := fs.String("dbfilename", "dump.mrdb", "snapshot file name (inside -dir)")
 	snapEvery := fs.Duration("snapshot-interval", 0, "take a background snapshot this often, and one at shutdown (0 = off)")
+	pprofAddr := fs.String("pprof-addr", "", "serve net/http/pprof on this loopback address, e.g. 127.0.0.1:6060 (off by default)")
 	replicaOf := fs.String("replicaof", "", `start as a replica of "host port"`)
 	backlog := fs.String("repl-backlog-size", "1mb", "bytes of replication stream kept for partial resyncs")
 	replQueue := fs.Int("repl-queue-size", 8192, "commands buffered per replica before it is dropped")
@@ -109,6 +110,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 		Logger:           logger,
 		QueueSize:        *queue,
 		SubscriberQueue:  *subQueue,
+		PprofAddr:        *pprofAddr,
 		ReplicaOf:        *replicaOf,
 		ReplBacklogSize:  int(backlogBytes),
 		ReplQueueSize:    *replQueue,

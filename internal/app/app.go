@@ -67,6 +67,10 @@ type Config struct {
 	ReplRetry       time.Duration // pause between connection attempts (default 1s)
 	ReplDial        repl.DialFunc // tests use it to cut the link
 
+	// PprofAddr, if set, serves net/http/pprof there. It must be a loopback
+	// address; anything else is refused.
+	PprofAddr string
+
 	// Clock supplies the time; tests inject a fake. Default time.Now.
 	Clock func() time.Time
 
@@ -77,12 +81,13 @@ type Config struct {
 
 // Node is a running server.
 type Node struct {
-	srv  *server.Server
-	eng  *engine.Engine
-	pers *persist.Manager
-	repl *repl.Manager
-	done chan struct{}
-	err  error
+	srv   *server.Server
+	eng   *engine.Engine
+	pers  *persist.Manager
+	repl  *repl.Manager
+	pprof *pprofServer
+	done  chan struct{}
+	err   error
 }
 
 // Start builds a node, starts listening and begins serving in the
@@ -99,6 +104,21 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if cfg.MaxMemory < 0 || cfg.MaxMemorySamples < 0 {
 		return nil, errors.New("app: maxmemory and maxmemory samples must not be negative")
 	}
+
+	var pp *pprofServer
+	if cfg.PprofAddr != "" {
+		var err error
+		if pp, err = startPprof(cfg.PprofAddr, cfg.Logger); err != nil {
+			return nil, err
+		}
+	}
+	// Every later failure must stop the profiler again.
+	started := false
+	defer func() {
+		if !started && pp != nil {
+			pp.stop()
+		}
+	}()
 
 	hub := pubsub.NewHub()
 	applier := &replApplier{log: cfg.Logger}
@@ -185,7 +205,8 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 		}
 	}
 
-	n := &Node{srv: srv, eng: eng, pers: pers, repl: rm, done: make(chan struct{})}
+	n := &Node{srv: srv, eng: eng, pers: pers, repl: rm, pprof: pp, done: make(chan struct{})}
+	started = true
 	cfg.Logger.Info("listening", "addr", srv.Addr().String(), "version", cfg.Version)
 	go n.run(ctx, cfg.Logger)
 	return n, nil
@@ -220,11 +241,22 @@ func (n *Node) run(ctx context.Context, log *slog.Logger) {
 		log.Error("closing persistence failed", "err", err)
 		n.err = errors.Join(n.err, err)
 	}
+	if n.pprof != nil {
+		n.pprof.stop()
+	}
 	log.Info("stopped")
 }
 
 // Addr returns the address the node is listening on.
 func (n *Node) Addr() net.Addr { return n.srv.Addr() }
+
+// PprofAddr returns the address of the profiling server, or "" if it is off.
+func (n *Node) PprofAddr() string {
+	if n.pprof == nil {
+		return ""
+	}
+	return n.pprof.ln.Addr().String()
+}
 
 // Wait blocks until the node has shut down and returns the reason it
 // stopped (nil after a normal, context-driven shutdown).

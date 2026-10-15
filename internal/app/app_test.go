@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -229,4 +230,39 @@ func TestAddr(t *testing.T) {
 		t.Errorf("Addr = %q (%v)", addr, err)
 	}
 	_ = n
+}
+
+func TestPprofServesOnLoopbackOnly(t *testing.T) {
+	n, _, _ := startNode(t, func(c *Config) { c.PprofAddr = "127.0.0.1:0" })
+	addr := n.PprofAddr()
+	if addr == "" {
+		t.Fatal("PprofAddr is empty")
+	}
+	resp, err := http.Get("http://" + addr + "/debug/pprof/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d", resp.StatusCode)
+	}
+	if resp, err := http.Get("http://" + addr + "/debug/pprof/goroutine?debug=1"); err != nil || resp.StatusCode != http.StatusOK {
+		t.Errorf("goroutine profile: %v %v", resp, err)
+	} else {
+		resp.Body.Close()
+	}
+
+	for _, bad := range []string{"0.0.0.0:0", ":0", "192.168.1.5:6060", "example.com:80", "nonsense"} {
+		if n, err := Start(context.Background(), Config{Addr: "127.0.0.1:0", Logger: quiet, PprofAddr: bad}); err == nil {
+			t.Errorf("Start accepted -pprof-addr %q", bad)
+			_ = n
+		}
+	}
+}
+
+func TestPprofIsOffByDefault(t *testing.T) {
+	n, _, _ := startNode(t, nil)
+	if n.PprofAddr() != "" {
+		t.Errorf("PprofAddr = %q", n.PprofAddr())
+	}
 }
