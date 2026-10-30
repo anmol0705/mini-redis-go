@@ -66,7 +66,7 @@ func newConnection(nc net.Conn, idle time.Duration) *connection {
 // forceClose cancels the connection's context and closes the socket.
 func (c *connection) forceClose() {
 	c.cancel()
-	_ = c.Conn.Close()
+	_ = c.Close()
 }
 
 // send queues a reply in the write buffer.
@@ -98,7 +98,7 @@ func (c *connection) Read(p []byte) (int, error) {
 		// Holding mu makes this atomic with stop(), so the idle deadline
 		// can never overwrite the "return now" deadline set by stop().
 		// An error here means the socket is dead; Read below reports it.
-		_ = c.Conn.SetReadDeadline(time.Now().Add(c.idle))
+		_ = c.SetReadDeadline(time.Now().Add(c.idle))
 	}
 	c.mu.Unlock()
 
@@ -114,7 +114,7 @@ func (c *connection) stop() {
 		close(c.stopCh)
 	}
 	c.stopping = true
-	_ = c.Conn.SetReadDeadline(time.Now()) // wakes a blocked Read; errors mean it is already dead
+	_ = c.SetReadDeadline(time.Now()) // wakes a blocked Read; errors mean it is already dead
 	c.mu.Unlock()
 }
 

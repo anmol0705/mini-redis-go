@@ -169,7 +169,7 @@ func TestAgainstNaive(t *testing.T) {
 
 func checkRanges(t *testing.T, l *List, ref naive, rng *rand.Rand) {
 	t.Helper()
-	if got := l.Range(0, len(ref)); !slices.Equal(got, []Element(ref)) && !(len(got) == 0 && len(ref) == 0) {
+	if got := l.Range(0, len(ref)); !slices.Equal(got, []Element(ref)) && (len(got) != 0 || len(ref) != 0) {
 		t.Fatalf("full Range differs:\n got %v\nwant %v", got, ref)
 	}
 	for range 5 {
