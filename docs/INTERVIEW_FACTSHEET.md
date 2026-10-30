@@ -3,7 +3,7 @@
 Everything here was checked against the code or against a command I ran.
 Anything I could not check is marked **UNVERIFIED**.
 
-- **Code state checked:** commit `a8e718c` ("chore: version 1.0.0", tag `v1.0`), plus one README edit made while writing this file (section 13).
+- **Code state checked:** commit `a8e718c` ("chore: version 1.0.0", tag `v1.0`). Later commits (listed in section 13) fixed the problems this document found; the findings below are marked FIXED where that happened. Everything is now pushed.
 - **Evidence date:** 2026-10-30 (local time +05:30), unless a line says otherwise.
 - **Machine:** Intel Core i5-1230U (10 cores, 12 threads), 15.7 GB RAM, Windows 11 Home 10.0.26300, Go 1.25.3 windows/amd64.
 - **Line numbers** like `engine.go:285` refer to that commit.
@@ -23,8 +23,8 @@ Status words used below:
 
 These are the surprises. Know them before the interview.
 
-1. **Nothing is on GitHub except the old placeholder.** The remote `main` is commit `3d97dc4` ("add placeholder main"). Your 25 newer commits and the 3 tags exist only on this laptop. The README, the engine and the replication code are not on GitHub. The repo is public. [E17]
-2. **A fresh clone fails `go test ./...`.** The 10 expected-output files `conformance/cases/*.out` were never committed, because `.gitignore` line 15 (`*.out`) hides them. `TestConformanceCases` (10 subtests) fails on a clone, and `conformance/run.sh` would too. All 13 other packages pass on a clone. Fix is in section 13. [E18]
+1. **FIXED: nothing was on GitHub except the old placeholder.** When I first checked, remote `main` was `3d97dc4` ("add placeholder main") and your 25 newer commits and 3 tags were only on this laptop. They were pushed afterwards (section 13). The repo is public. [E17]
+2. **FIXED: a fresh clone failed `go test ./...`.** The 10 expected-output files `conformance/cases/*.out` had never been committed, because `.gitignore` line 15 (`*.out`) hid them. `TestConformanceCases` (10 subtests) failed on a clone. After committing the files, a fresh clone passes all 14 packages. [E18]
 3. **The resume claim "133.6k vs 87.6k commands/s" did not reproduce.** The saved run does show those numbers. A re-run today (and 3 more interleaved rounds) shows no reliable difference. The engine median was 127k and the mutex median was 132k commands/s. Remove the "~50% higher" claim. Details in section 1. [E5] [E6]
 4. **"client libraries work" was never tested.** Only `redis-cli` (Memurai's build, `memurai-cli` 4.1.8) was used. No Go, Python or Node client library was run. [E13]
 5. **"LRU eviction" is approximate and off by default.** It samples 5 random keys and drops the oldest. The default is `-maxmemory 0` and policy `noeviction`.
@@ -32,7 +32,7 @@ These are the surprises. Know them before the interview.
 7. **The memory limit is an estimate.** For 500,000 small keys it said 52 MB while the process used 139 MB. [E10]
 8. **One slow command stalls everyone.** `KEYS *` over 500,000 keys made another client's `PING` wait up to 64 ms (idle worst case: 0.7 ms). [E8]
 9. **Replication is private to this project.** It cannot talk to real Redis. There is no failover. A primary restart forces every replica to do a full resync.
-10. **Not run anywhere yet:** Debian, `redis-benchmark`, real Ctrl+C or SIGTERM handling, CI, the `Makefile`, `golangci-lint`. The `kill -9` crash test passed on Windows only. [E12]
+10. **Still not run:** Debian by hand, `redis-benchmark`, real Ctrl+C or SIGTERM handling, the `Makefile`. **GitHub Actions has now run and is green** (lint, Linux race tests, Windows tests, 4 cross-builds), which also covers Linux `-race` and `golangci-lint`. The `kill -9` crash test passed on Windows only. [E12] [E22]
 
 ### 0.1 Small glossary for a C++ reader
 
@@ -175,7 +175,7 @@ Or drop the benchmark sentence entirely and keep only the design sentence.
 ### 1.7 "Verified with race-detector runs": TRUE (Windows only)
 
 - `go test -race -count=1 ./...` passes for all 14 test packages. [E3]
-- A Linux race run is **UNVERIFIED**. CI would do it, but CI has never run.
+- **Linux:** the GitHub Actions job `test-linux` runs `go test -race -cover ./...` on Ubuntu and passed on the final run (section 13, [E22]).
 - Caveat: the race detector only sees races on code paths the tests actually run.
 
 ### 1.8 "5 fuzz targets": TRUE
@@ -193,7 +193,7 @@ Or drop the benchmark sentence entirely and keep only the design sentence.
 - Run today against this server: 16 passed, 0 failed. Run today against my own separate Memurai instance (Redis 7.2.12 compatible): 16 passed, 0 failed. [E13]
 - The CLI used was `memurai-cli` 4.1.8, not the Debian `redis-cli` (**UNVERIFIED** on Debian).
 - A 17th check (`redis-cli --pipe`) prints "note: not supported" against this server, because it needs inline commands. It is informational and does not count.
-- **Catch:** the suite needs the 10 `.out` files, which are not committed (finding 2). On a fresh clone the suite does not work.
+- **Catch (fixed):** the suite needs the 10 `.out` files, which had not been committed (finding 2). They are committed now.
 
 ### 1.10 "unit, fuzz and redis-cli conformance tests": TRUE (exact counts)
 
@@ -217,7 +217,7 @@ ok  	internal/repl        ok  internal/resp     ok  internal/server    ok  inter
 ok  	internal/snapshot    ok  internal/store    ?   internal/testclient [no test files]
 ```
 
-**On a fresh clone of HEAD, the same command fails** in `internal/app` (finding 2). [E18]
+**On a fresh clone, the same command first failed** in `internal/app` (finding 2, since fixed). After the fix, a fresh clone passed all 14 packages. [E18]
 
 Coverage measured today [E19]. Own-package: aof 94.0%, command 96.6%, glob 92.5%, pubsub 100%, resp 95.8%, skiplist 94.4%, snapshot 96.7%, store 96.1%, app 89.5%, engine 87.4%, cmd 86.3%, server 81.9%, persist 58.3%, repl 9.4%. Counting every package's tests against `repl`, `persist`, `engine`, `server`, `app`: repl 87.8%, persist 88.6%, engine 90.2%, server 91.4%, app 90.2%.
 
@@ -237,9 +237,9 @@ Coverage measured today [E19]. Own-package: aof 94.0%, command 96.6%, glob 92.5%
 | File | Lines | What it does |
 |---|---|---|
 | `.gitattributes` | 0 | Forces LF line endings in git. |
-| `.github/workflows/ci.yml` | 60 | GitHub Actions: lint, Linux race tests, Windows tests, 4-target cross build. Has never run (not pushed). |
-| `.gitignore` | 40 | Ignore rules. Line 15 (`*.out`) wrongly hides the conformance expected-output files (finding 2). |
-| `.golangci.yml` | 33 | golangci-lint config (5 linters). Untested as a file. |
+| `.github/workflows/ci.yml` | 60 | GitHub Actions: lint, Linux race tests, Windows tests, 4-target cross build. Ran on GitHub: all 7 jobs green after two lint fixes. |
+| `.gitignore` | 40 | Ignore rules. Line 15 (`*.out`) used to hide the conformance expected-output files; the last 2 lines un-ignore them (finding 2, fixed). |
+| `.golangci.yml` | 33 | golangci-lint config (5 linters). Accepted by golangci-lint v2.15.0 in CI. |
 | `LICENSE` | 21 | MIT licence text. |
 | `Makefile` | 50 | Targets build, test, race, lint, bench, fuzz-short, conformance, cover, clean. Never run (no make here). |
 | `README.md` | 185 | Overview, quick start, command table, diagram, benchmarks, limitations. |
@@ -258,7 +258,7 @@ Coverage measured today [E19]. Own-package: aof 94.0%, command 96.6%, glob 92.5%
 | `conformance/cases/08-errors.in` | 13 | Conformance script: WRONGTYPE, arity and syntax errors. |
 | `conformance/cases/09-transactions.in` | 27 | Conformance script: MULTI/EXEC/DISCARD/EXECABORT. |
 | `conformance/cases/10-pubsub-and-server.in` | 3 | Conformance script: PUBLISH, CLIENT SETNAME. |
-| `conformance/run.sh` | 106 | Runs every case through redis-cli against HOST PORT (16 checks). Needs the uncommitted .out files. |
+| `conformance/run.sh` | 106 | Runs every case through redis-cli against HOST PORT (16 checks). Needs the .out files (committed now). |
 | `docs/DEBIAN_TESTING.md` | 208 | Step-by-step Debian test guide (none of it run on Debian yet). |
 | `docs/INTERVIEW_FACTSHEET.md` | 1222 | This file. |
 | `docs/architecture.md` | 108 | Package map, request lifecycle, concurrency model, goroutine table. |
@@ -286,7 +286,7 @@ Coverage measured today [E19]. Own-package: aof 94.0%, command 96.6%, glob 92.5%
 | `internal/aof/fuzz_test.go` | 57 | FuzzReplay. |
 | `internal/app/app.go` | 275 | Wires everything: Config, Start, Run, Node, shutdown order. |
 | `internal/app/app_test.go` | 268 | End-to-end tests over TCP: all types, expiry, maxmemory, eviction, pprof. |
-| `internal/app/conformance_test.go` | 115 | Replays conformance/cases against a node (needs the uncommitted .out files). |
+| `internal/app/conformance_test.go` | 115 | Replays conformance/cases against a node (needs the .out files). |
 | `internal/app/hooks.go` | 98 | Adapters: Hooks/SectionSource, multiPropagator (AOF then replication), replApplier. |
 | `internal/app/persist_test.go` | 599 | Restart, crash copy, torn tail, corruption, rewrite under load, scheduler. |
 | `internal/app/pprof.go` | 81 | Optional loopback-only pprof HTTP server. |
@@ -347,16 +347,16 @@ Coverage measured today [E19]. Own-package: aof 94.0%, command 96.6%, glob 92.5%
 | `internal/store/zsets.go` | 133 | Sorted set: map plus skip list. |
 | `internal/testclient/testclient.go` | 211 | Tiny RESP client for tests. |
 | `scripts/crash-test.sh` | 93 | kill -9 crash test (needs redis-cli). |
-| `conformance/cases/01-basic.out` | 10 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/02-strings.out` | 34 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/03-keys.out` | 32 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/04-lists.out` | 21 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/05-hashes.out` | 12 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/06-sets.out` | 9 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/07-zsets.out` | 27 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/08-errors.out` | 13 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/09-transactions.out` | 32 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
-| `conformance/cases/10-pubsub-and-server.out` | 3 | **NOT TRACKED** (hidden by `.gitignore:15`). Expected output for the matching `.in`. |
+| `conformance/cases/01-basic.out` | 10 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/02-strings.out` | 34 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/03-keys.out` | 32 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/04-lists.out` | 21 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/05-hashes.out` | 12 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/06-sets.out` | 9 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/07-zsets.out` | 27 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/08-errors.out` | 13 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/09-transactions.out` | 32 | Expected output for the matching `.in` (committed in `bef7377`). |
+| `conformance/cases/10-pubsub-and-server.out` | 3 | Expected output for the matching `.in` (committed in `bef7377`). |
 
 ### 2.2 Which package imports which
 
@@ -844,7 +844,7 @@ Tests: `TestActiveExpire`, `TestActiveExpireStopsWhenFewAreExpired`, `TestActive
 | 002 | `002-session-layer.md` | `QUIT`, `MULTI`, `SUBSCRIBE` need per-connection state | state in the command package; `if`s in the read loop; a session object per connection | Session object owned by the connection goroutine. `Handler` interface declared in `server`. `Listen` split from `Serve` | `server` imports `command` for `Info` and `Resolve`. **The record still describes `command.Dispatcher`, which no longer exists** (the engine replaced it) |
 | 003 | `003-network-input-limits.md` | Sizes in the protocol come from an untrusted client | trust the numbers; cap them; read in chunks | Caps, chunked reads, small initial slices, `%q`-escaped errors, max clients | A legitimate 512 MiB value still costs memory. Limits are constants, not flags |
 | 004 | `004-shutdown.md` | Stop cleanly on Windows and Linux, finish running commands | close everything at once; a flag; per-connection stop via a read deadline | `SetReadDeadline(now)` wakes a blocked read; wait for a grace period; then force close | A half-received command is dropped. A stuck handler cannot be interrupted |
-| 005 | `005-single-owner-engine.md` | Atomic transactions and ordered logging with many connections | a mutex per command; sharded locks; one owner goroutine | One owner goroutine, as Redis does | Data path is single-threaded; slow commands block everyone. **The record's TCP numbers (133.6k vs 87.6k) do not reproduce** |
+| 005 | `005-single-owner-engine.md` | Atomic transactions and ordered logging with many connections | a mutex per command; sharded locks; one owner goroutine | One owner goroutine, as Redis does | Data path is single-threaded; slow commands block everyone. **Corrected: the record now shows both benchmark runs and says there is no reliable TCP difference** |
 | 006 | `006-slow-subscribers.md` | A slow subscriber must not block publishers | block; unbounded queue; drop the message; drop the subscriber | Bounded queue (256), disconnect on overflow | A bursty subscriber can be dropped. Messages are not durable |
 | 007 | `007-persistence-design.md` | Persistence without `fork`, without losing writes | separate writer goroutine; iterate the live data; copy | Engine is the only AOF writer; `BGSAVE` copies inside the engine, writes outside; rewrite = capture + copy + swap; log absolute times | Memory for the copy; engine pause during copy and swap; no log checksum |
 | 008 | `008-eviction-and-replication.md` | Memory limit; replication without implementing Redis's protocol | read the Go heap; exact LRU list; PSYNC and RDB | Incremental memory estimate; sampled LRU; private `MRSYNC` protocol | Estimate is far from real memory; replication is not Redis-compatible |
@@ -870,8 +870,8 @@ Tests: `TestActiveExpire`, `TestActiveExpireStopsWhenFewAreExpired`, `TestActive
 
 | # | H/M/L | Weakness | Evidence |
 |---|---|---|---|
-| 1 | **H** | The GitHub repo shows only the old placeholder. Nothing was pushed. | [E17] |
-| 2 | **H** | A fresh clone fails `go test ./...` (10 conformance `.out` files not committed). CI would be red. | [E18] |
+| 1 | ~~H~~ | ~~The GitHub repo shows only the old placeholder.~~ **FIXED**: pushed, tags included. | [E17] |
+| 2 | ~~H~~ | ~~A fresh clone fails `go test ./...`.~~ **FIXED**: `.out` files committed; fresh clone passes. | [E18] |
 | 3 | **H** | The throughput comparison is not a clean win (and the resume claim did not reproduce). The "mutex" baseline is not the original store. | [E5] [E6] |
 | 4 | **H** | Persistence is off by default. `everysec` can lose about 1 s. No AOF checksums. No transaction frame in the log. | code, `-h` |
 | 5 | **H** | Replication is a private protocol with no failover. | section 7 |
@@ -882,8 +882,8 @@ Tests: `TestActiveExpire`, `TestActiveExpireStopsWhenFewAreExpired`, `TestActive
 | 10 | **M** | A pipelining client that never reads can stall itself on Linux (blocked reply write). Not reproduced on Windows at 66 MB. | [E9], Linux UNVERIFIED |
 | 11 | **M** | A failed AOF write leaves the change applied in memory while the client gets `MISCONF`. | CODE (`engine.go:357`), untested |
 | 12 | **M** | Benchmarks are Windows-only, one laptop, same process for client and server, and vary by ±40% between runs and sessions. `redis-benchmark` and Debian numbers do not exist. | [E5] [E20] |
-| 13 | **M** | CI workflow, `Makefile`, `bench/run.sh`, `golangci-lint` config were never run. | [E17] |
-| 14 | **M** | Docs drift: decision 005, `docs/interview-notes.md` (lines 38-39) and the Phase-2 learning note still tell the old benchmark story. Decision 002 and the Phase-1 learning note describe `command.Dispatcher`, which no longer exists. | `git grep` |
+| 13 | **M** | `Makefile` and `bench/run.sh` were never run. (The CI workflow and `golangci-lint` config have now run: green. It needed two small lint fixes first.) | [E22] |
+| 14 | **M** | Docs drift, partly fixed: decision 005, `docs/interview-notes.md` and the Phase-2 note no longer quote the old benchmark as a result. **Still stale:** decision 002 and the Phase-1 learning note describe `command.Dispatcher`, which no longer exists. | `git grep` |
 | 15 | **M** | `BGSAVE`, full resync and `BGREWRITEAOF` copy all data (about 2 times memory during the copy). `FinishRewrite` does an fsync and rename on the engine goroutine. | CODE, [E20] |
 | 16 | **L-M** | Every command is its own engine round trip, even pipelined ones. No batching. Replicas also apply one command per engine round trip. | CODE |
 | 17 | **L-M** | Eviction quality (5-key sampled LRU) never measured. | section 6.4 |
@@ -925,7 +925,7 @@ Every goroutine has an owner and a stop condition (table in section 3.1). Tests 
 The context is cancelled. The listener is closed. Every connection gets a read deadline of "now", which wakes blocked reads. Commands already received still finish and reply. After a 5 s grace period leftover connections are force-closed. Then the engine closes, then replication, then persistence (final flush, optional snapshot, close AOF). **Real Ctrl+C or SIGTERM delivery is UNVERIFIED.**
 
 **8. Where is the data-race risk, and how do you check it?**
-At the hand-offs: replies, `Dump()` copies, and the few shared structures. I use `go test -race`, which passes today on Windows [E3]. It only covers paths the tests run. A Linux run is UNVERIFIED.
+At the hand-offs: replies, `Dump()` copies, and the few shared structures. I use `go test -race`, which passes today on Windows [E3]. It only covers paths the tests run. CI also runs it on Ubuntu, and that passed.
 
 **9. What does the `sync.Pool` in the engine do? Is reuse safe?**
 It recycles request objects and their reply channels. It is safe because a request is used once: submitted, answered once, received by its owner, then recycled. The reply channel has capacity 1 and exactly one send.
@@ -1031,7 +1031,7 @@ Go's runtime already uses epoll underneath. A goroutine blocked on a socket cost
 **NOT BUILT.** Keep a version counter per key, record watched versions in the session, and have `ExecuteAtomic` check them first and abort if changed. Because the engine is single-threaded, the check and the batch are atomic.
 
 **40. What would you do differently, and what are the biggest weaknesses?**
-Commit the conformance `.out` files and push to GitHub. Run everything on Linux. Fix the benchmark story: benchmark the same workload longer and on Linux. Add a total-size cap per command, a write timeout and an output buffer limit. Add a checksum to AOF records. Write a client-library compatibility test.
+(Already done: commit the conformance `.out` files and push to GitHub.) Run everything on Linux by hand. Fix the benchmark story: benchmark the same workload longer and on Linux. Add a total-size cap per command, a write timeout and an output buffer limit. Add a checksum to AOF records. Write a client-library compatibility test.
 
 ---
 
@@ -1119,7 +1119,7 @@ redis-cli -p 6406 INFO replication ; redis-cli -p 6407 INFO replication
 ### Tests and benchmarks
 
 ```bash
-go test ./...                       # all tests (on a fresh clone: 1 test fails until finding 2 is fixed)
+go test ./...                       # all tests (a fresh clone passes)
 go test -race -count=1 ./...        # race detector (needs gcc; works on this Windows machine)
 go test -count=1 -v ./... | grep -c -- '--- PASS'      # -> 598 today
 # fuzz one target for 10 s:
@@ -1127,7 +1127,7 @@ go test -run '^$' -fuzz '^FuzzReadCommand$' -fuzztime 10s ./internal/resp
 # the exact benchmark behind section 1.6:
 go test -run '^$' -bench 'Handler|TCP' -benchtime 3s -count 3 ./internal/server
 # conformance suite (it runs FLUSHALL on the target! use a scratch server):
-conformance/run.sh 127.0.0.1 6390            # needs the .out files; see finding 2
+conformance/run.sh 127.0.0.1 6390
 # crash test on Debian:
 scripts/crash-test.sh 1000
 ```
@@ -1138,43 +1138,42 @@ On Windows, `conformance/run.sh` and `scripts/crash-test.sh` need Git Bash and a
 
 ## 13. Git status
 
+State after the fixes (checked 2026-10-30):
+
 | Question | Answer | Evidence |
 |---|---|---|
-| Is everything committed? | **Yes, except my README edit and this file** (made while writing this document). `git status` was clean before I started. | [E17] |
-| Is it pushed to `github.com/anmol0705/mini-redis-go`? | **NO.** Local `main` is 25 commits ahead of `origin/main`. `origin/main` is `3d97dc4` "chore: add placeholder main". The 3 tags `v0.1`, `v0.2`, `v1.0` are not on the remote. GitHub has no `README.md`, no `internal/engine`, no `Makefile` (checked through the API: 404 for each). | [E17] |
-| Is the repo public? | **Yes**: `visibility: PUBLIC` (`gh repo view`). | [E17] |
-| Does the README match the code? | **Now yes**, after the fixes listed below. Links all resolve. Every command in the table exists and every command in the code is in the table. The flags in the quick start are valid per `-h`. | [E21] |
+| Is everything committed? | Yes. `git status` is clean. | [E17] |
+| Is it pushed to `github.com/anmol0705/mini-redis-go`? | **Yes.** `main` and the tags `v0.1`, `v0.2`, `v1.0` are on the remote. | `git ls-remote`, [E22] |
+| Is the repo public? | **Yes** (`gh repo view`: `PUBLIC`). | [E17] |
+| Does a fresh clone pass `go test ./...`? | **Yes**, all 14 packages `ok`. | [E18] |
+| Is CI green? | **Yes**, all 7 jobs: lint, test-linux (`-race -cover`), test-windows, 4 cross-builds. | [E22] |
+| Does the README match the code? | Yes: links resolve, every command in the table exists and every command in the code is in the table, quick-start flags are valid per `-h`. | [E21] |
 
-### Finding 2 and its fix (not applied; you asked me not to change anything beyond README)
+### What changed after this document first found problems
 
-`.gitignore` line 15 contains `*.out` (from the Go template). It hides `conformance/cases/*.out`. A fresh clone therefore lacks them, `TestConformanceCases` fails (10 subtests), and `conformance/run.sh` fails every case. To fix, run these in the repo root:
+| Commit | Change |
+|---|---|
+| `6b1dd4c` | README: Go version, decision-005 row, benchmark figures (README only) |
+| `8140cd7` | This factsheet added |
+| `bef7377` | `.gitignore`: `!conformance/cases/*.out`; the 10 `.out` files committed (finding 2) |
+| `5128b58` | Decision 005, `docs/interview-notes.md` and the Phase-2 note: the TCP benchmark showed no reliable difference; the "133.6k vs 87.6k" figure kept only as a historical data point. Also corrected a sentence that wrongly said a test covers a vanishing client |
+| `cd0a088`, `5549f31` | Lint fixes after the first CI run (see below) |
 
-```bash
-printf '\n# expected conformance output must be committed\n!conformance/cases/*.out\n' >> .gitignore
-git add .gitignore conformance/cases/*.out
-git commit -m "fix: commit conformance expected-output files"
-```
+### CI history (GitHub Actions workflow `ci`)
 
-Then confirm with a fresh clone: `git clone . /tmp/check && cd /tmp/check && go test ./...`.
+1. First run (`5128b58`): test-linux, test-windows and all 4 cross-builds **passed**; `lint` **failed** with 4 staticcheck style findings (QF1008 "could remove embedded field `Conn` from selector" at `internal/server/conn.go` lines 69, 101, 117; QF1001 De Morgan's law at `internal/skiplist/skiplist_test.go:172`). My local `staticcheck` does not enable those rules, which is why I had not seen them.
+2. Second run (`cd0a088`): `lint` failed again with 2 more of the same QF1008 kind (`conn.go` lines 130 and 133). The tool reports a few at a time.
+3. Third run (`5549f31`): **all 7 jobs green.** The fixes were mechanical (`c.Conn.Close()` became `c.Close()`, and so on). `c.Conn.Read` had to stay because `connection` defines its own `Read`.
 
-### Pushing
+Warnings in the CI log that are not failures: Node.js 20 deprecation for `actions/checkout@v4` and `actions/setup-go@v5`; "Restore cache failed: Dependencies file is not found ... go.sum" (the project has no `go.sum`, so Go module caching is skipped); a notice that `ubuntu-latest` will move to a newer Ubuntu.
 
-```bash
-git add README.md docs/INTERVIEW_FACTSHEET.md   # if not already committed
-git push origin main --tags
-```
-
-`origin/main` has no commits that your local `main` lacks, so this is a plain fast-forward. After pushing, GitHub Actions will run `.github/workflows/ci.yml` for the first time (**UNVERIFIED** result).
-
-### README changes I made (README only)
+### README changes (made earlier)
 
 1. **Quick start:** "Requires Go 1.25 or newer" became "Go 1.25.3 or newer (the version in `go.mod`)".
-2. **Decision table row 005:** now says the engine was chosen for atomic transactions and ordered logging, and that the benchmark against a mutex showed no reliable throughput difference over TCP.
-3. **Benchmarks intro:** now dated 2026-10-30, and says results vary a lot between runs and sessions.
-4. **Benchmarks table, TCP rows:** replaced "133.6 k vs 87.6 k" with the re-run medians and ranges and the note that the earlier gap did not reproduce.
-5. **Benchmarks table, micro-benchmarks:** updated to today's medians (parse about 290 ns, store `SET`/`GET` about 23/19 ns, `ZRANK`+`ZRANGE` about 1.4 us, `Dump` about 7 ms). Added that the store benchmark cycles through 1,024 of the 100,000 keys.
-
-**Not changed (outside README):** decision 005, `docs/interview-notes.md`, the Phase-2 learning note, decision 002 and the Phase-1 learning note still carry the old benchmark story or the removed `Dispatcher`. `.gitignore` is untouched.
+2. **Decision table row 005:** says the engine was chosen for atomic transactions and ordered logging, and that the benchmark showed no reliable throughput difference over TCP.
+3. **Benchmarks intro:** dated 2026-10-30, and says results vary a lot between runs and sessions.
+4. **Benchmarks table, TCP rows:** replaced "133.6 k vs 87.6 k" with re-run medians, ranges and a note that the earlier gap did not reproduce.
+5. **Benchmarks table, micro-benchmarks:** today's medians; noted that the store benchmark cycles through 1,024 of the 100,000 keys.
 
 ---
 
@@ -1205,14 +1204,15 @@ All on 2026-10-30 unless marked, in the working tree at `a8e718c` (+ README edit
 | E19 | `go test -cover`; merged `-coverpkg` runs for repl, persist, engine, server, app | numbers in section 1.10 |
 | E20 | micro-benchmarks, 3 runs each | parse 289 ns (14 allocs); `Set` 23 ns; `Get` 19 ns; `ZRank+ZRange` 1.44 us; `Dump` 6.99 ms (14.4 MB) |
 | E21 | README links, README-vs-table check in both directions | all links resolve; no missing or invented commands |
+| E22 | `git push origin main --tags`; `gh run list`, `gh run view` | run 1 (`5128b58`): lint failed, 6 other jobs passed; run 2 (`cd0a088`): lint failed; run 3 (`5549f31`): **all 7 jobs success** |
 
 ## Appendix B: Everything I could not verify (UNVERIFIED)
 
 - Real Ctrl+C and SIGTERM handling and the exit code.
-- Anything on Debian or Linux: `go test -race`, `redis-cli`, `redis-benchmark`, the crash test, two-process replication.
+- Anything done by hand on Debian or Linux: `redis-cli`, `redis-benchmark`, the crash test, two-process replication. (CI did run `go test -race -cover` and the build on Ubuntu.)
 - `redis-benchmark` compatibility, including whether it accepts the empty `CONFIG GET` reply.
 - Any client library (Go, Python, Node).
-- The GitHub Actions workflow, the `Makefile` targets, `bench/run.sh`, the `golangci-lint` config.
+- The `Makefile` targets and `bench/run.sh`.
 - Throughput and latency under `appendfsync always`.
 - Durability across an OS crash or power loss.
 - Reply-buffer stalls with huge unread pipelines on Linux.
