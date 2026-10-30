@@ -1,0 +1,34 @@
+OK
+OK
+11
+16
+15
+-5
+-5
+3
+6
+abcdef
+6
+0
+OK
+1
+2
+3
+OK
+OK
+v3
+0
+OK
+1
+-1
+OK
+OK
+1
+OK
+ERR value is not an integer or out of range
+ERR value is not an integer or out of range
+OK
+ERR increment or decrement would overflow
+ERR invalid expire time in 'set' command
+ERR value is not an integer or out of range
+ERR syntax error

@@ -1,0 +1,32 @@
+OK
+OK
+QUEUED
+QUEUED
+QUEUED
+OK
+2
+2
+OK
+QUEUED
+OK
+0
+ERR EXEC without MULTI
+ERR DISCARD without MULTI
+OK
+QUEUED
+ERR wrong number of arguments for 'get' command
+EXECABORT Transaction discarded because of previous errors.
+0
+OK
+ERR MULTI calls can not be nested
+OK
+OK
+OK
+QUEUED
+QUEUED
+QUEUED
+OK
+WRONGTYPE Operation against a key holding the wrong kind of value
+OK
+1
+2

@@ -38,3 +38,6 @@ appendonly.aof
 dump.mrdb
 *.mrdb.tmp
 
+
+# expected conformance output must be committed
+!conformance/cases/*.out
