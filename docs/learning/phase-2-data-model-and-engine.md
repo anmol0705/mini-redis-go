@@ -62,8 +62,8 @@ The client sends `ZADD board 5 alice`, then `ZRANK board alice`.
 1. **Why one goroutine instead of locks?**
    Commands become atomic for free, transactions are just a batch, the order
    changes are applied equals the order they are logged, and there are no data
-   races. The measured cost was about 0.4 us per command at handler level and
-   nothing visible over TCP (decision 005).
+   races. The measured cost was about 0.4 to 0.5 us per command with no network, and no
+   reliable throughput difference over TCP (decision 005).
 
 2. **How can the engine never block on a slow client?**
    It only produces a `resp.Value` and drops it in a channel that has room for

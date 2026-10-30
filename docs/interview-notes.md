@@ -33,11 +33,14 @@ been measured it says so.
 ## Phase 2
 
 - I chose a **single goroutine that owns the data** over a mutex because it makes
-  transactions, propagation order and expiry trivially correct. I measured
-  both: the queue hop costs about 0.4 us per command at handler level (0.85 vs
-  0.5 us, medians of 3 runs), and over TCP the engine was even or ahead
-  (133.6k vs 87.6k cmd/s without pipelining, 594k vs 531k at depth 16) on a
-  Windows laptop. Debian numbers: TBD - measure on Debian. (Decision 005.)
+  transactions, propagation order and expiry trivially correct, not because it
+  was faster. I measured both. With no network the mutex handler is faster (2.69M
+  vs 1.19M cmd/s, 2026-10-30; the queue hop costs roughly 0.4 to 0.5 us). Over TCP
+  there was **no reliable difference**: one run showed the engine ahead without
+  pipelining, a later run did not, and 6 alternating runs gave engine median 127k
+  vs mutex median 132k cmd/s (Windows laptop, ranges overlap). The "mutex" side
+  is a global mutex around the typed store, not the original Phase 1 store.
+  Debian numbers: TBD - measure on Debian. (Decision 005.)
 - I chose **my own skip list with span counts** over a library or a sorted
   slice, so rank and range-by-rank are O(log n). I verified it against a
   sorted-slice reference with randomized operations, plus a structural
