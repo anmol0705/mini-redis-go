@@ -28,7 +28,7 @@ replication, pub/sub - by building each part, testing it hard, and measuring it.
 
 ## Quick start
 
-Requires Go 1.25 or newer.
+Requires Go 1.25.3 or newer (the version in `go.mod`).
 
 **Linux / macOS**
 
@@ -112,7 +112,7 @@ Each has a record with the options considered and, where applicable, the measure
 | [002](docs/decisions/002-session-layer.md) | A per-connection session for connection-scoped commands; `Listen`/`Serve` split |
 | [003](docs/decisions/003-network-input-limits.md) | Never trust a size from the network: caps, chunked reads |
 | [004](docs/decisions/004-shutdown.md) | Graceful shutdown that behaves the same on Windows and Linux |
-| [005](docs/decisions/005-single-owner-engine.md) | One goroutine owns the keyspace, chosen after benchmarking a mutex |
+| [005](docs/decisions/005-single-owner-engine.md) | One goroutine owns the keyspace (chosen for atomic transactions and ordered logging; benchmarked against a mutex, with no reliable throughput difference over TCP) |
 | [006](docs/decisions/006-slow-subscribers.md) | Disconnect, never block, a slow subscriber |
 | [007](docs/decisions/007-persistence-design.md) | AOF, snapshots and rewrites around the engine; no `fork` |
 | [008](docs/decisions/008-eviction-and-replication.md) | Sampled LRU, memory estimate, and a simplified (non-Redis) replication protocol |
@@ -122,9 +122,12 @@ For learning, read `docs/learning/phase-N-*.md` in order, then
 
 ## Benchmarks
 
-Numbers below are **measured**, on one Windows laptop (Intel i5-1230U, 12
-logical CPUs, Go 1.25.3, loopback). Debian and `redis-benchmark` results are
-**TBD - measure on Debian** (run `bench/run.sh`).
+Numbers below were **measured on 2026-10-30** on one Windows laptop (Intel
+i5-1230U, 12 logical CPUs, Go 1.25.3, loopback). Results on this machine vary a
+lot between runs and between sessions (the same parse benchmark gave about 430 ns
+on 2026-10-15 and about 290 ns today), so read them as rough orders of magnitude,
+not precise figures. Debian and `redis-benchmark` results are **TBD - measure on
+Debian** (run `bench/run.sh`).
 
 `redis-benchmark` vs real Redis (requests/second):
 
@@ -132,17 +135,20 @@ logical CPUs, Go 1.25.3, loopback). Debian and `redis-benchmark` results are
 |---|---|---|---|---|
 | SET / GET / INCR / LPUSH / ... | TBD - measure on Debian | TBD - measure on Debian | TBD - measure on Debian | TBD - measure on Debian |
 
-Go benchmarks (`make bench`, medians; source `docs/bench/`):
+Go benchmarks (`make bench`; source in `internal/*/bench_test.go`; the 2026-10-15
+raw output is in `docs/bench/`). The engine is compared with a mutex-guarded
+handler that exists only in the benchmark code (`lockedHandler`). In the TCP
+benchmark, 32 connections send a 50/50 GET/SET mix over 10,000 keys.
 
-| What | Result |
+| What | Result (2026-10-30) |
 |---|---|
-| 32 parallel clients over TCP, 50/50 GET/SET, no pipelining | 133.6 k commands/s through the engine (mutex handler: 87.6 k) |
-| same with pipeline depth 16 | 594 k commands/s (mutex handler: 531 k) |
-| Handler only (no network), engine vs mutex | 1.16 M vs 1.97 M commands/s |
-| Parse one `SET key value` | about 430 ns, 14 allocations |
-| Store `SET` / `GET` on 100,000 keys | about 30 ns each, 0 allocations |
-| `ZRANK` + `ZRANGE` of 10 items on 100,000 members | about 2.6 us |
-| Copy a 100,000 key keyspace (the BGSAVE pause) | about 11 ms |
+| TCP, 32 connections, no pipelining | **No reliable difference.** Engine: 115k to 179k commands/s (median 127k, 6 runs). Mutex: 127k to 151k (median 132k, 6 runs). An earlier session measured 134k vs 88k for engine vs mutex; that gap did not reproduce |
+| TCP, pipeline depth 16 | Engine 577k, mutex 665k commands/s (median of 3 runs each; the earlier session measured 594k vs 531k) |
+| Handler only, no network | Engine 1.19M, mutex 2.69M commands/s (median of 3 runs): the queue hop costs time when there is no network |
+| Parse one `SET key value` | about 290 ns, 14 allocations |
+| Store `SET` / `GET` on a 100,000-key store (the loop cycles through 1,024 of the keys) | about 23 ns / 19 ns, 0 allocations |
+| `ZRANK` + `ZRANGE` of 10 items on 100,000 members | about 1.4 us |
+| Copy a 100,000-key keyspace (the BGSAVE pause) | about 7 ms |
 
 ## Limitations (short list)
 
