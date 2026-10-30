@@ -127,10 +127,10 @@ func (c *connection) isStopping() bool {
 // replyAndClose writes a final error and closes the connection. Write
 // errors are ignored: the client is being dropped anyway.
 func (c *connection) replyAndClose(msg string) {
-	_ = c.Conn.SetWriteDeadline(time.Now().Add(finalReplyTimeout))
+	_ = c.SetWriteDeadline(time.Now().Add(finalReplyTimeout))
 	_ = c.send(resp.Error(msg))
 	_ = c.flush()
-	_ = c.Conn.Close()
+	_ = c.Close()
 }
 
 // startPusher starts the goroutine that writes pub/sub messages for sub to
