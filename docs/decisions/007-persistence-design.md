@@ -60,6 +60,32 @@ If anything fails the old log keeps working and the temp file is deleted.
 Windows cannot rename over an open file, which is why the old handle is closed
 first; if the rename fails, the old file is reopened.
 
+### 4a. Automatic rewrite
+
+Without a trigger the file only shrinks when someone types `BGREWRITEAOF`. A
+goroutine owned by `persist.Manager` (same pattern as the snapshot scheduler:
+a ticker, stopped by `Close`, waited for by the WaitGroup) checks once a second
+and starts the same `RewriteAOF` through `Engine.Exec`. It is due when
+
+    percentage > 0  and  current >= min-size  and  current > base + base*percentage/100
+
+and no rewrite is running (a base of 0 leaves only the min-size test). Defaults:
+`-aof-rewrite-percentage 100`, `-aof-rewrite-min-size 64mb`, as in Redis.
+
+*Why a base size:* "grown by 100 %" has to be measured from something. The base
+is the file size right after the last successful rewrite (or when the file was
+opened at startup, after any torn-tail truncation). Without it a log that
+compacts to 50 MB would be rewritten again immediately, or never.
+
+*How it stays safe:* the log counts bytes in two atomics (`size`, `base`), so
+the check reads no engine data and takes no lock; the engine is used only to
+start the rewrite, and it re-checks "already running" inside that step. A failed
+rewrite is logged and the trigger waits a minute before trying again.
+
+*Trade-off:* the rewrite still pauses the engine briefly to copy the keyspace and
+again to append the captured commands and swap the file. Not measured. Size is
+counted at the file, so bytes still in the write buffer are not included.
+
 ### 5. `everysec` uses a goroutine, and failures are reported
 
 A goroutine fsyncs once per second if there is unsynced data. A failure is

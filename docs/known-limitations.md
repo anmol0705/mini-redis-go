@@ -66,6 +66,13 @@ An honest list. State: v1.0.
 - **Transactions are not framed in the AOF.** The commands of an `EXEC` are logged
   one after another without `MULTI`/`EXEC`, so a crash in the middle of writing one
   can leave it half-applied after recovery.
+- **AOF rewrites are triggered by size only.** The automatic rewrite
+  (`-aof-rewrite-percentage`, `-aof-rewrite-min-size`) looks at the file once a
+  second. Like `BGREWRITEAOF`, a rewrite pauses the engine briefly to copy the
+  keyspace and again to append the captured commands and swap the file; those
+  pauses were not measured. The size it counts is the bytes written to the file,
+  not what is still in the write buffer. After a failed rewrite the automatic
+  trigger waits one minute before trying again.
 - **`appendfsync everysec`** can lose about a second of acknowledged writes; a
   fsync running long can delay the engine's next write (as in Redis).
 - **`SAVE` blocks the engine.** `-snapshot-interval` also takes a final snapshot

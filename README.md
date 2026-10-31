@@ -19,7 +19,8 @@ replication, pub/sub - by building each part, testing it hard, and measuring it.
 - Pub/Sub with bounded per-subscriber queues (slow subscribers are disconnected).
 - `MULTI` / `EXEC` / `DISCARD` transactions, atomic by construction.
 - **Persistence**: append-only file (`always` / `everysec` / `no`), checksummed
-  snapshots, `SAVE` / `BGSAVE` / `BGREWRITEAOF`, torn-tail repair.
+  snapshots, `SAVE` / `BGSAVE` / `BGREWRITEAOF` (also started automatically as the
+  file grows), torn-tail repair.
 - `maxmemory` with `noeviction`, `allkeys-lru`, `allkeys-random`, `volatile-ttl`.
 - **Replication** with full and partial resync, read-only replicas, expiry
   propagated as `DEL`, slow replicas dropped (private protocol, **not** Redis
@@ -57,6 +58,17 @@ With persistence and a memory limit:
                 -snapshot-interval 10m -maxmemory 256mb -maxmemory-policy allkeys-lru
 ```
 
+The append-only file is rewritten automatically when it has grown past a
+percentage of its size after the last rewrite and is above a minimum size:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-aof-rewrite-percentage` | `100` | rewrite when the file is more than this many percent larger than after the last rewrite (`0` turns automatic rewrites off) |
+| `-aof-rewrite-min-size` | `64mb` | never rewrite automatically below this size (accepts `kb`, `mb`, `gb`) |
+
+`BGREWRITEAOF` still works at any time. `INFO persistence` shows `aof_current_size`,
+`aof_base_size` and `aof_rewrites_auto`.
+
 Run `./bin/miniredis -h` for every flag. Tests: `go test -race ./...`
 (`make test`, `make race`). Debian instructions: [docs/DEBIAN_TESTING.md](docs/DEBIAN_TESTING.md).
 
@@ -74,7 +86,7 @@ Run `./bin/miniredis -h` for every flag. Tests: `go test -race ./...`
 | Sorted sets | `ZADD`, `ZREM`, `ZSCORE`, `ZRANK`, `ZRANGE` (by index, `WITHSCORES`), `ZCARD` |
 | Pub/Sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH` (exact channel names) |
 | Transactions | `MULTI`, `EXEC`, `DISCARD` |
-| Persistence | `SAVE`, `BGSAVE`, `BGREWRITEAOF` |
+| Persistence | `SAVE`, `BGSAVE`, `BGREWRITEAOF` (also triggered automatically) |
 | Replication | `REPLICAOF host port`, `REPLICAOF NO ONE`, and the private `MRSYNC` used between servers |
 
 Not supported: inline commands, `WATCH`, `SELECT` (one database), pattern
