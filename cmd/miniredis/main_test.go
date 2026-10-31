@@ -101,6 +101,11 @@ func TestRunRejectsBadFlags(t *testing.T) {
 		{"bad appendfsync", []string{"-addr", "127.0.0.1:0", "-appendfsync", "sometimes"}},
 		{"bad maxmemory policy", []string{"-addr", "127.0.0.1:0", "-maxmemory-policy", "lfu"}},
 		{"negative snapshot interval", []string{"-snapshot-interval", "-1s"}},
+		{"negative aof rewrite percentage", []string{"-aof-rewrite-percentage", "-1"}},
+		{"non-numeric aof rewrite percentage", []string{"-aof-rewrite-percentage", "lots"}},
+		{"garbage aof rewrite min size", []string{"-aof-rewrite-min-size", "big"}},
+		{"negative aof rewrite min size", []string{"-aof-rewrite-min-size", "-5mb"}},
+		{"unknown aof rewrite size unit", []string{"-aof-rewrite-min-size", "1tb"}},
 		{"stray argument", []string{"extra"}},
 		{"unusable address", []string{"-addr", "not an address"}},
 	}
@@ -121,6 +126,34 @@ func TestRunHelpIsNotAnError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "-addr") {
 		t.Errorf("help text lacks -addr:\n%s", stderr.String())
+	}
+}
+
+// The validation errors name the flag, so a typo is easy to find.
+func TestAOFRewriteFlagErrorsNameTheFlag(t *testing.T) {
+	for args, want := range map[string]string{
+		"-aof-rewrite-percentage -1": "-aof-rewrite-percentage must not be negative",
+		"-aof-rewrite-min-size big":  "invalid -aof-rewrite-min-size",
+		"-aof-rewrite-min-size -5mb": "invalid -aof-rewrite-min-size",
+	} {
+		var stderr syncBuffer
+		err := run(context.Background(), strings.Fields(args), &stderr)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("run(%q) = %v; want an error containing %q", args, err, want)
+		}
+	}
+}
+
+func TestHelpListsAOFRewriteFlagsWithDefaults(t *testing.T) {
+	var stderr syncBuffer
+	if err := run(context.Background(), []string{"-h"}, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	help := stderr.String()
+	for _, want := range []string{"-aof-rewrite-percentage int", "(default 100)", "-aof-rewrite-min-size string", `(default "64mb")`} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help lacks %q:\n%s", want, help)
+		}
 	}
 }
 

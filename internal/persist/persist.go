@@ -14,6 +14,8 @@
 //     the compacted file in the background, and then, back inside the engine,
 //     appends the captured commands and swaps the file in atomically. Writes
 //     made during the rewrite are therefore never lost.
+//   - An automatic trigger starts that same rewrite when the file has grown
+//     past a percentage of its size after the last rewrite (see rewriteDue).
 //
 // Concurrency: Manager's methods named in engine.Propagator and command.Hooks
 // run on the engine goroutine. Background goroutines (BGSAVE writer, rewrite
@@ -26,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -52,11 +55,21 @@ type Config struct {
 	// SnapshotInterval, if positive, takes a background snapshot that often
 	// and one more at shutdown.
 	SnapshotInterval time.Duration
+	// AOFRewritePercentage and AOFRewriteMinSize control the automatic AOF
+	// rewrite: it starts when the file is at least MinSize bytes and has
+	// grown by more than Percentage percent over its size after the last
+	// rewrite. Percentage 0 disables it.
+	AOFRewritePercentage int
+	AOFRewriteMinSize    int64
+	// AOFRewriteRetry is how long to wait after a failed rewrite before the
+	// automatic trigger may start another (default one minute).
+	AOFRewriteRetry time.Duration
 
 	Logger *slog.Logger
-	// AOFTicks and SnapshotTicks replace the real timers in tests.
-	AOFTicks      func() (<-chan time.Time, func())
-	SnapshotTicks func() (<-chan time.Time, func())
+	// AOFTicks, SnapshotTicks and AOFRewriteTicks replace the real timers in tests.
+	AOFTicks        func() (<-chan time.Time, func())
+	SnapshotTicks   func() (<-chan time.Time, func())
+	AOFRewriteTicks func() (<-chan time.Time, func())
 }
 
 // Manager owns persistence for one node.
@@ -78,6 +91,9 @@ type Manager struct {
 	lastCopyUS   atomic.Int64
 	statusMu     sync.Mutex
 	lastBGStatus string
+
+	autoRewrites    atomic.Int64 // automatic rewrites started
+	rewriteFailedAt atomic.Int64 // unix nanoseconds of the last failed rewrite, 0 if none
 }
 
 // New prepares a Manager for db. Call Attach, then Load, before serving.
@@ -96,6 +112,12 @@ func New(cfg Config, db *store.DB) (*Manager, error) {
 	}
 	if cfg.SnapshotInterval < 0 {
 		return nil, errors.New("persist: snapshot interval must not be negative")
+	}
+	if cfg.AOFRewritePercentage < 0 || cfg.AOFRewriteMinSize < 0 || cfg.AOFRewriteRetry < 0 {
+		return nil, errors.New("persist: AOF rewrite percentage, minimum size and retry delay must not be negative")
+	}
+	if cfg.AOFRewriteRetry == 0 {
+		cfg.AOFRewriteRetry = time.Minute
 	}
 	if filepath.Base(cfg.DBFilename) != cfg.DBFilename {
 		return nil, fmt.Errorf("persist: -dbfilename %q must be a file name, not a path", cfg.DBFilename)
@@ -360,6 +382,7 @@ func (m *Manager) RewriteAOF(db *store.DB) (string, error) {
 func (m *Manager) finishRewrite(tmp string, items []store.Item) {
 	if err := writeAOFFile(tmp, items); err != nil {
 		m.log.Error("aof rewrite failed while writing the new file", "err", err)
+		m.rewriteFailedAt.Store(time.Now().UnixNano())
 		m.abortRewrite(tmp)
 		return
 	}
@@ -372,6 +395,7 @@ func (m *Manager) finishRewrite(tmp string, items []store.Item) {
 		m.abortRewrite(tmp)
 	case ferr != nil:
 		m.log.Error("aof rewrite failed while installing the new file", "err", ferr)
+		m.rewriteFailedAt.Store(time.Now().UnixNano())
 	default:
 		m.log.Info("aof rewrite finished")
 	}
@@ -424,18 +448,109 @@ func (m *Manager) InfoSection(name string) (string, bool) {
 	}
 	l := m.aofLog.Load()
 	rewriting := l != nil && l.Rewriting()
+	var curSize, baseSize int64
+	if l != nil {
+		curSize, baseSize = l.Size(), l.BaseSize()
+	}
 	return fmt.Sprintf("# Persistence\r\nloading:0\r\nrdb_bgsave_in_progress:%d\r\nrdb_last_save_time:%d\r\n"+
 		"rdb_last_bgsave_status:%s\r\nrdb_last_bgsave_copy_usec:%d\r\naof_enabled:%d\r\naof_fsync:%s\r\n"+
-		"aof_rewrite_in_progress:%d\r\n",
+		"aof_rewrite_in_progress:%d\r\naof_current_size:%d\r\naof_base_size:%d\r\naof_rewrites_auto:%d\r\n",
 		b2i(m.bgSaving.Load()), m.lastSaveUnix.Load(), status, m.lastCopyUS.Load(),
-		b2i(m.cfg.AppendOnly), m.cfg.Fsync, b2i(rewriting)), true
+		b2i(m.cfg.AppendOnly), m.cfg.Fsync, b2i(rewriting),
+		curSize, baseSize, m.autoRewrites.Load()), true
 }
 
 // ---- lifecycle ----
 
-// StartScheduler begins periodic background snapshots if an interval was
-// configured. The goroutine is stopped by Close.
+// StartScheduler starts the background schedulers: periodic snapshots (if an
+// interval was configured) and the automatic AOF rewrite check (if enabled).
+// Their goroutines are stopped by Close.
 func (m *Manager) StartScheduler() {
+	m.startSnapshotScheduler()
+	m.startAutoRewrite()
+}
+
+// rewriteDue is the automatic rewrite rule. The file must be at least minSize
+// bytes and larger than base plus percentage percent of base. A base of 0
+// (nothing known about an earlier size) leaves only the minimum-size test.
+// percentage 0 disables the rule.
+func rewriteDue(current, base, minSize int64, percentage int) bool {
+	if percentage <= 0 || current < minSize {
+		return false
+	}
+	if base <= 0 {
+		return true
+	}
+	growth := int64(percentage)
+	if base > math.MaxInt64/growth {
+		return false // the threshold does not fit in an int64: never reached
+	}
+	threshold := base + base*growth/100
+	return threshold >= base && current > threshold
+}
+
+// startAutoRewrite checks once per second whether the AOF has grown enough to
+// rewrite. It only reads atomics; the engine is involved only to start a
+// rewrite, through the same RewriteAOF that BGREWRITEAOF uses.
+func (m *Manager) startAutoRewrite() {
+	if !m.cfg.AppendOnly || m.cfg.AOFRewritePercentage <= 0 {
+		return
+	}
+	var ticks <-chan time.Time
+	release := func() {}
+	if m.cfg.AOFRewriteTicks != nil {
+		ticks, release = m.cfg.AOFRewriteTicks()
+	} else {
+		t := time.NewTicker(time.Second)
+		ticks, release = t.C, t.Stop
+	}
+	m.wg.Go(func() {
+		defer release()
+		for {
+			select {
+			case <-ticks:
+				if !m.autoRewriteCheck() {
+					return
+				}
+			case <-m.ctx.Done():
+				return
+			}
+		}
+	})
+}
+
+// autoRewriteCheck runs one check. It returns false when the engine is gone.
+func (m *Manager) autoRewriteCheck() bool {
+	l := m.aofLog.Load()
+	if l == nil || l.Rewriting() {
+		return true
+	}
+	cur, base := l.Size(), l.BaseSize()
+	if !rewriteDue(cur, base, m.cfg.AOFRewriteMinSize, m.cfg.AOFRewritePercentage) {
+		return true
+	}
+	if failed := m.rewriteFailedAt.Load(); failed != 0 && time.Since(time.Unix(0, failed)) < m.cfg.AOFRewriteRetry {
+		return true // a rewrite failed recently: do not retry in a tight loop
+	}
+	err := m.eng.Exec(m.ctx, func(st *engine.State) {
+		if l.Rewriting() {
+			return // a rewrite began since the check above
+		}
+		if _, err := m.RewriteAOF(st.DB()); err != nil {
+			m.log.Warn("automatic aof rewrite could not start", "err", err)
+			m.rewriteFailedAt.Store(time.Now().UnixNano())
+			return
+		}
+		m.autoRewrites.Add(1)
+		m.log.Info("automatic aof rewrite started",
+			"current_size", cur, "base_size", base, "percentage", m.cfg.AOFRewritePercentage)
+	})
+	return err == nil
+}
+
+// startSnapshotScheduler begins periodic background snapshots if an interval
+// was configured.
+func (m *Manager) startSnapshotScheduler() {
 	if m.cfg.SnapshotInterval <= 0 {
 		return
 	}

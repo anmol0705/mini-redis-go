@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -596,4 +597,140 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 			t.Fatalf("timed out waiting for %s", what)
 		}
 	}
+}
+
+// autoRewriteCfg enables the automatic rewrite with small thresholds and a
+// fast timer, so the test does not wait for the real one-second period.
+func autoRewriteCfg(minSize int64) func(*Config) {
+	return func(c *Config) {
+		c.AppendOnly, c.AppendFsync = true, "everysec"
+		c.AOFRewritePercentage, c.AOFRewriteMinSize = 100, minSize
+		c.AOFRewriteTicks = func() (<-chan time.Time, func()) {
+			t := time.NewTicker(5 * time.Millisecond)
+			return t.C, t.Stop
+		}
+	}
+}
+
+// End to end: the log crosses the thresholds while a second client keeps
+// writing, the server rewrites it by itself, the file shrinks, and after a
+// restart every acknowledged write is still there.
+func TestAutomaticRewriteShrinksTheFileAndLosesNothing(t *testing.T) {
+	const minSize = 5000
+	dir, clock := t.TempDir(), newClock()
+	path := filepath.Join(dir, aof.FileName)
+	a := mustStart(t, clock, withDir(dir, autoRewriteCfg(minSize)))
+	c := testclient.MustDial(t, a.addr)
+
+	// Below the minimum size nothing happens, however many timer ticks pass.
+	for range 100 {
+		c.Cmd(t, "INCR", "churn") // 25 bytes each: 2500 in total
+	}
+	time.Sleep(100 * time.Millisecond) // about 20 timer ticks
+	if got := field(t, c, "persistence", "aof_rewrites_auto"); got != "0" {
+		t.Fatalf("aof_rewrites_auto = %s below the minimum size; want 0", got)
+	}
+
+	// Cross the threshold while another client writes continuously.
+	var written atomic.Int64
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		w, err := testclient.Dial(a.addr)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer w.Close()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			r, err := w.Do("INCR", "during")
+			if err != nil || r.Kind != ':' {
+				t.Errorf("INCR during the rewrite = %v, %v", r, err)
+				return
+			}
+			written.Store(r.Int)
+		}
+	})
+	for range 400 {
+		c.Cmd(t, "INCR", "churn")
+	}
+	waitUntil(t, "an automatic rewrite", func() bool {
+		return field(t, c, "persistence", "aof_rewrites_auto") != "0"
+	})
+	close(stop)
+	wg.Wait()
+
+	// With the writes over, the log settles below the minimum size.
+	waitUntil(t, "the log to settle", func() bool {
+		st, err := os.Stat(path)
+		return err == nil && st.Size() < minSize &&
+			field(t, c, "persistence", "aof_rewrite_in_progress") == "0"
+	})
+	total := written.Load()
+	rawBytes := int64(500*25) + total*int64(len("*2\r\n$4\r\nINCR\r\n$6\r\nduring\r\n"))
+	st, _ := os.Stat(path)
+	t.Logf("%d bytes were logged in total; the file is now %d bytes; %s automatic rewrites",
+		rawBytes, st.Size(), field(t, c, "persistence", "aof_rewrites_auto"))
+	if st.Size() >= rawBytes/2 {
+		t.Errorf("file is %d bytes after %d bytes of writes; it did not shrink", st.Size(), rawBytes)
+	}
+	if field(t, c, "persistence", "aof_base_size") == "0" || field(t, c, "persistence", "aof_current_size") != fmt.Sprint(st.Size()) {
+		t.Errorf("INFO sizes do not match the file (%d bytes):\n%s", st.Size(), c.Reply(t, "INFO", "persistence").Str)
+	}
+	_ = c.Close()
+	if err := a.stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	b := mustStart(t, clock, withDir(dir, aofOn("everysec")))
+	cb := testclient.MustDial(t, b.addr)
+	if got := cb.Cmd(t, "GET", "churn"); got != "$500" {
+		t.Errorf("churn = %s; want 500", got)
+	}
+	if got := cb.Cmd(t, "GET", "during"); total > 0 && got != fmt.Sprintf("$%d", total) {
+		t.Errorf("during = %s; want $%d (writes made during the rewrites were lost)", got, total)
+	}
+	if got := cb.Cmd(t, "DBSIZE"); got != ":2" && total > 0 {
+		t.Errorf("DBSIZE = %s", got)
+	}
+}
+
+func TestAutomaticRewriteIsOffWhenPercentageIsZero(t *testing.T) {
+	a := mustStart(t, newClock(), withDir(t.TempDir(), func(c *Config) {
+		autoRewriteCfg(1)(c)
+		c.AOFRewritePercentage = 0
+	}))
+	c := testclient.MustDial(t, a.addr)
+	for range 300 {
+		c.Cmd(t, "INCR", "n")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := field(t, c, "persistence", "aof_rewrites_auto"); got != "0" {
+		t.Errorf("aof_rewrites_auto = %s with percentage 0", got)
+	}
+	if got := field(t, c, "persistence", "aof_current_size"); got == "0" {
+		t.Errorf("aof_current_size = 0 although 300 writes were logged")
+	}
+}
+
+func TestShutdownWithAutomaticRewriteLeavesNoGoroutines(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+	n, err := startAt(t, newClock(), withDir(t.TempDir(), autoRewriteCfg(1000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := testclient.MustDial(t, n.addr)
+	for range 200 {
+		c.Cmd(t, "INCR", "n")
+	}
+	_ = c.Close()
+	if err := n.stop(); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "goroutines to exit", func() bool { return runtime.NumGoroutine() <= baseline })
 }

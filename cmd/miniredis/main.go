@@ -52,6 +52,8 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	dir := fs.String("dir", ".", "directory for the append-only file and snapshot")
 	appendOnly := fs.String("appendonly", "no", "log every write to an append-only file: yes or no")
 	appendFsync := fs.String("appendfsync", "everysec", "fsync policy of the append-only file: always, everysec or no")
+	rewritePct := fs.Int("aof-rewrite-percentage", 100, "rewrite the append-only file when it has grown this many percent past its size after the last rewrite (0 disables)")
+	rewriteMin := fs.String("aof-rewrite-min-size", "64mb", "do not rewrite the append-only file automatically below this size, e.g. 64mb")
 	dbFilename := fs.String("dbfilename", "dump.mrdb", "snapshot file name (inside -dir)")
 	snapEvery := fs.Duration("snapshot-interval", 0, "take a background snapshot this often, and one at shutdown (0 = off)")
 	pprofAddr := fs.String("pprof-addr", "", "serve net/http/pprof on this loopback address, e.g. 127.0.0.1:6060 (off by default)")
@@ -90,6 +92,13 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	if *replQueue < 1 {
 		return errors.New("-repl-queue-size must be at least 1")
 	}
+	if *rewritePct < 0 {
+		return errors.New("-aof-rewrite-percentage must not be negative")
+	}
+	rewriteMinBytes, err := parseSize(*rewriteMin)
+	if err != nil {
+		return fmt.Errorf("invalid -aof-rewrite-min-size: %w", err)
+	}
 	memBytes, err := parseSize(*maxMemory)
 	if err != nil {
 		return fmt.Errorf("invalid -maxmemory: %w", err)
@@ -102,26 +111,28 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
 
 	return app.Run(ctx, app.Config{
-		Addr:             *addr,
-		MaxClients:       *maxClients,
-		IdleTimeout:      *idleTimeout,
-		ShutdownGrace:    *grace,
-		Version:          version,
-		Logger:           logger,
-		QueueSize:        *queue,
-		SubscriberQueue:  *subQueue,
-		PprofAddr:        *pprofAddr,
-		ReplicaOf:        *replicaOf,
-		ReplBacklogSize:  int(backlogBytes),
-		ReplQueueSize:    *replQueue,
-		Dir:              *dir,
-		AppendOnly:       aofOn,
-		AppendFsync:      *appendFsync,
-		DBFilename:       *dbFilename,
-		SnapshotInterval: *snapEvery,
-		MaxMemory:        memBytes,
-		MaxMemoryPolicy:  *policy,
-		MaxMemorySamples: *samples,
+		Addr:                 *addr,
+		MaxClients:           *maxClients,
+		IdleTimeout:          *idleTimeout,
+		ShutdownGrace:        *grace,
+		Version:              version,
+		Logger:               logger,
+		QueueSize:            *queue,
+		SubscriberQueue:      *subQueue,
+		PprofAddr:            *pprofAddr,
+		ReplicaOf:            *replicaOf,
+		ReplBacklogSize:      int(backlogBytes),
+		ReplQueueSize:        *replQueue,
+		Dir:                  *dir,
+		AppendOnly:           aofOn,
+		AppendFsync:          *appendFsync,
+		DBFilename:           *dbFilename,
+		SnapshotInterval:     *snapEvery,
+		AOFRewritePercentage: *rewritePct,
+		AOFRewriteMinSize:    rewriteMinBytes,
+		MaxMemory:            memBytes,
+		MaxMemoryPolicy:      *policy,
+		MaxMemorySamples:     *samples,
 	})
 }
 

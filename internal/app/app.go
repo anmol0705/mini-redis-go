@@ -58,6 +58,12 @@ type Config struct {
 	AppendFsync      string        // always, everysec (default) or no
 	DBFilename       string        // snapshot file name (default dump.mrdb)
 	SnapshotInterval time.Duration // background snapshots this often (0 = off)
+	// AOFRewritePercentage and AOFRewriteMinSize set the automatic AOF
+	// rewrite: it starts once the file is at least AOFRewriteMinSize bytes and
+	// has grown more than AOFRewritePercentage percent beyond its size after
+	// the last rewrite. Percentage 0 (the zero value) disables it.
+	AOFRewritePercentage int
+	AOFRewriteMinSize    int64
 
 	// Replication. ReplicaOf ("host port" or "host:port") starts the node as
 	// a replica of that primary.
@@ -74,9 +80,12 @@ type Config struct {
 	// Clock supplies the time; tests inject a fake. Default time.Now.
 	Clock func() time.Time
 
-	// AOFTicks and SnapshotTicks replace the real timers in tests.
-	AOFTicks      func() (<-chan time.Time, func())
-	SnapshotTicks func() (<-chan time.Time, func())
+	// AOFTicks, SnapshotTicks and AOFRewriteTicks replace the real timers in tests.
+	AOFTicks        func() (<-chan time.Time, func())
+	SnapshotTicks   func() (<-chan time.Time, func())
+	AOFRewriteTicks func() (<-chan time.Time, func())
+	// AOFRewriteRetry is the pause after a failed rewrite (default one minute).
+	AOFRewriteRetry time.Duration
 }
 
 // Node is a running server.
@@ -156,6 +165,8 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 		Dir: cfg.Dir, AppendOnly: cfg.AppendOnly, Fsync: fsync, DBFilename: cfg.DBFilename,
 		SnapshotInterval: cfg.SnapshotInterval, Logger: cfg.Logger,
 		AOFTicks: cfg.AOFTicks, SnapshotTicks: cfg.SnapshotTicks,
+		AOFRewritePercentage: cfg.AOFRewritePercentage, AOFRewriteMinSize: cfg.AOFRewriteMinSize,
+		AOFRewriteTicks: cfg.AOFRewriteTicks, AOFRewriteRetry: cfg.AOFRewriteRetry,
 	}, db)
 	if err != nil {
 		_ = srv.Close()

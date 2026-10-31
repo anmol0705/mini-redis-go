@@ -119,6 +119,13 @@ type Log struct {
 	rewriting atomic.Bool
 	dirty     atomic.Bool // written since the last fsync (everysec)
 
+	// size is the number of bytes written to the file so far (bytes still in
+	// the bufio buffer are not counted). base is the size right after the
+	// last rewrite, or the file size when the log was opened. Both are read
+	// from any goroutine (INFO, the automatic rewrite check).
+	size atomic.Int64
+	base atomic.Int64
+
 	errMu sync.Mutex
 	bgErr error // last background fsync failure, cleared by a success
 
@@ -136,7 +143,9 @@ func (w lockedWriter) Write(p []byte) (int, error) {
 	if w.l.f == nil {
 		return 0, errors.New("aof: file is closed")
 	}
-	return w.l.f.Write(p)
+	n, err := w.l.f.Write(p)
+	w.l.size.Add(int64(n))
+	return n, err
 }
 
 // New wraps an already open file. The Log owns f and closes it in Close.
@@ -179,8 +188,21 @@ func Open(opts Options) (*Log, error) {
 	if err != nil {
 		return nil, fmt.Errorf("aof: open: %w", err)
 	}
-	return New(f, opts), nil
+	l := New(f, opts)
+	// Nothing has been written yet, so the size can be set without a race.
+	if st, err := os.Stat(opts.Path); err == nil {
+		l.size.Store(st.Size())
+		l.base.Store(st.Size())
+	}
+	return l, nil
 }
+
+// Size returns the bytes written to the log file so far. Safe from any goroutine.
+func (l *Log) Size() int64 { return l.size.Load() }
+
+// BaseSize returns the size the log had right after the last successful
+// rewrite, or when it was opened. Safe from any goroutine.
+func (l *Log) BaseSize() int64 { return l.base.Load() }
 
 // syncLoop is the "everysec" goroutine; it exits when quit is closed.
 func (l *Log) syncLoop(ticks <-chan time.Time, release func()) {
@@ -322,6 +344,7 @@ func (l *Log) FinishRewrite(tmp string) (err error) {
 	if werr != nil {
 		return fmt.Errorf("aof: finish rewrite file: %w", werr)
 	}
+	st, statErr := os.Stat(tmp)
 
 	l.fmu.Lock()
 	defer l.fmu.Unlock()
@@ -340,6 +363,11 @@ func (l *Log) FinishRewrite(tmp string) (err error) {
 	l.f = nf
 	if renameErr != nil {
 		return fmt.Errorf("aof: replace file: %w", renameErr)
+	}
+	if statErr == nil {
+		// The new file is the log now; later growth is measured from its size.
+		l.size.Store(st.Size())
+		l.base.Store(st.Size())
 	}
 	syncDir(filepath.Dir(l.opts.Path))
 	return nil
